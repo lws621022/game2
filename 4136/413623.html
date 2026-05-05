@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>時空裂隙倖存者 - Rift Survivor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0f172a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        .ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .pointer-auto {
+            pointer-events: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 遊戲主畫布 -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- UI 層 -->
+    <div class="ui-layer flex flex-col items-center p-4">
+        <!-- 經驗條 -->
+        <div class="w-full max-w-xl bg-gray-800 h-4 rounded-full border-2 border-gray-700 overflow-hidden shadow-lg">
+            <div id="expBar" class="h-full bg-blue-500 w-0 transition-all duration-300"></div>
+        </div>
+        
+        <div class="flex justify-between w-full max-w-xl mt-2 text-white font-bold drop-shadow-md">
+            <div id="levelDisplay">等級: 1</div>
+            <div id="scoreDisplay">擊殺: 0</div>
+            <div id="timerDisplay">時間: 00:00</div>
+        </div>
+
+        <!-- 升級選單 -->
+        <div id="levelUpMenu" class="hidden pointer-auto fixed inset-0 bg-black/70 flex items-center justify-center p-6">
+            <div class="bg-slate-800 border-4 border-blue-500 p-8 rounded-xl max-w-md w-full shadow-2xl">
+                <h2 class="text-3xl text-blue-400 font-black text-center mb-6">進化選擇</h2>
+                <div id="upgradeOptions" class="space-y-4"></div>
+            </div>
+        </div>
+
+        <!-- 遊戲結束選單 -->
+        <div id="gameOverMenu" class="hidden pointer-auto fixed inset-0 bg-black/90 flex items-center justify-center p-6">
+            <div class="text-center">
+                <h1 class="text-6xl text-red-600 font-black mb-4">任務失敗</h1>
+                <p id="finalStats" class="text-white text-xl mb-8"></p>
+                <button onclick="location.reload()" class="bg-white text-black px-10 py-4 rounded-full font-bold text-2xl hover:bg-gray-200 transition">
+                    重新連結
+                </button>
+            </div>
+        </div>
+
+        <!-- 虛擬搖桿 (手機端) -->
+        <div id="joystickContainer" class="fixed bottom-10 left-10 w-32 h-32 bg-white/10 rounded-full border-2 border-white/20 lg:hidden pointer-auto">
+            <div id="joystickKnob" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-12 h-12 bg-white/50 rounded-full"></div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const expBar = document.getElementById('expBar');
+        const levelDisplay = document.getElementById('levelDisplay');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const timerDisplay = document.getElementById('timerDisplay');
+        const levelUpMenu = document.getElementById('levelUpMenu');
+        const upgradeOptionsContainer = document.getElementById('upgradeOptions');
+
+        let width, height;
+        let gameActive = true;
+        let isPaused = false;
+        let frameCount = 0;
+        let score = 0;
+        let startTime = Date.now();
+
+        // 玩家狀態 - 增強版
+        const player = {
+            x: 0,
+            y: 0,
+            radius: 15,
+            speed: 3.8,
+            hp: 200,      // 初始血量翻倍
+            maxHp: 200,   // 最大血量翻倍
+            level: 1,
+            exp: 0,
+            nextLevelExp: 100,
+            attackSpeed: 1.2, 
+            damage: 30,    // 初始攻擊增加
+            bulletSize: 6,
+            bulletSpeed: 8,
+            piercing: 1,   // 新增：穿透次數
+            lastShot: 0,
+            color: '#3b82f6'
+        };
+
+        const keys = {};
+        const joystick = { active: false, x: 0, y: 0, currentX: 0, currentY: 0 };
+        
+        let enemies = [];
+        let bullets = [];
+        let gems = [];
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            if (player.x === 0) {
+                player.x = width / 2;
+                player.y = height / 2;
+            }
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        window.addEventListener('keydown', e => keys[e.code] = true);
+        window.addEventListener('keyup', e => keys[e.code] = false);
+
+        const joystickContainer = document.getElementById('joystickContainer');
+        const joystickKnob = document.getElementById('joystickKnob');
+
+        joystickContainer.addEventListener('touchstart', e => {
+            joystick.active = true;
+            const rect = joystickContainer.getBoundingClientRect();
+            joystick.x = rect.left + rect.width / 2;
+            joystick.y = rect.top + rect.height / 2;
+        });
+
+        window.addEventListener('touchmove', e => {
+            if (!joystick.active) return;
+            const touch = e.touches[0];
+            const dx = touch.clientX - joystick.x;
+            const dy = touch.clientY - joystick.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            const maxDist = 50;
+            const angle = Math.atan2(dy, dx);
+            const moveX = Math.min(dist, maxDist) * Math.cos(angle);
+            const moveY = Math.min(dist, maxDist) * Math.sin(angle);
+            joystickKnob.style.transform = `translate(calc(-50% + ${moveX}px), calc(-50% + ${moveY}px))`;
+            joystick.currentX = moveX / maxDist;
+            joystick.currentY = moveY / maxDist;
+        });
+
+        window.addEventListener('touchend', () => {
+            joystick.active = false;
+            joystickKnob.style.transform = 'translate(-50%, -50%)';
+            joystick.currentX = 0;
+            joystick.currentY = 0;
+        });
+
+        class Enemy {
+            constructor() {
+                const side = Math.floor(Math.random() * 4);
+                if (side === 0) { this.x = Math.random() * width; this.y = -50; }
+                else if (side === 1) { this.x = width + 50; this.y = Math.random() * height; }
+                else if (side === 2) { this.x = Math.random() * width; this.y = height + 50; }
+                else { this.x = -50; this.y = Math.random() * height; }
+
+                this.radius = 12 + Math.random() * 8;
+                this.hp = 25 + (player.level * 8);
+                this.speed = 1.2 + (Math.random() * 1);
+                this.color = '#ef4444';
+                this.damage = 0.3; // 降低每幀傷害
+            }
+
+            update() {
+                const dx = player.x - this.x;
+                const dy = player.y - this.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                this.x += (dx / dist) * this.speed;
+                this.y += (dy / dist) * this.speed;
+
+                if (dist < this.radius + player.radius) {
+                    player.hp -= this.damage;
+                    if (player.hp <= 0) endGame();
+                }
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.closePath();
+            }
+        }
+
+        class Bullet {
+            constructor(tx, ty) {
+                this.x = player.x;
+                this.y = player.y;
+                const dx = tx - player.x;
+                const dy = ty - player.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                this.vx = (dx / dist) * player.bulletSpeed;
+                this.vy = (dy / dist) * player.bulletSpeed;
+                this.radius = player.bulletSize;
+                this.damage = player.damage;
+                this.pierceCount = player.piercing; // 當前子彈可穿透次數
+                this.hitEnemies = new Set(); // 防止同一子彈重複傷害同一個敵人
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = '#fbbf24';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#fbbf24';
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.closePath();
+            }
+        }
+
+        class Gem {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 4;
+                this.expValue = 30;
+            }
+
+            update() {
+                const dx = player.x - this.x;
+                const dy = player.y - this.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist < 150) { // 磁鐵範圍略微增加
+                    this.x += (dx / dist) * 7;
+                    this.y += (dy / dist) * 7;
+                }
+                if (dist < player.radius + this.radius) {
+                    collectGem(this);
+                    return true;
+                }
+                return false;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = '#34d399';
+                ctx.fill();
+                ctx.closePath();
+            }
+        }
+
+        function spawnEnemy() {
+            if (enemies.length < 40 + (player.level * 8)) {
+                enemies.push(new Enemy());
+            }
+        }
+
+        function autoShoot() {
+            if (enemies.length === 0) return;
+            const now = Date.now();
+            if (now - player.lastShot > 1000 / player.attackSpeed) {
+                let nearest = enemies[0];
+                let minDist = Infinity;
+                enemies.forEach(e => {
+                    const d = Math.sqrt((e.x-player.x)**2 + (e.y-player.y)**2);
+                    if (d < minDist) { minDist = d; nearest = e; }
+                });
+                bullets.push(new Bullet(nearest.x, nearest.y));
+                player.lastShot = now;
+            }
+        }
+
+        function collectGem(gem) {
+            player.exp += gem.expValue;
+            if (player.exp >= player.nextLevelExp) {
+                levelUp();
+            }
+            updateUI();
+        }
+
+        function levelUp() {
+            player.level++;
+            player.exp = 0;
+            player.nextLevelExp *= 1.25;
+            isPaused = true;
+            showUpgradeMenu();
+        }
+
+        function showUpgradeMenu() {
+            levelUpMenu.classList.remove('hidden');
+            upgradeOptionsContainer.innerHTML = '';
+            
+            const upgrades = [
+                { name: '🔥 強化彈藥', effect: () => player.damage += 15, desc: '子彈傷害 +15' },
+                { name: '⚡ 快速連發', effect: () => player.attackSpeed += 0.4, desc: '射速提升 30%' },
+                { name: '🎯 穿透射擊', effect: () => player.piercing += 1, desc: '子彈可多穿透 1 個敵人' },
+                { name: '👟 超頻移動', effect: () => player.speed += 0.6, desc: '移動速度提升' },
+                { name: '💎 重裝護甲', effect: () => { player.maxHp += 50; player.hp += 50; }, desc: '最大生命值 +50' },
+                { name: '🔧 急救修復', effect: () => player.hp = Math.min(player.hp + 100, player.maxHp), desc: '立即回復 100 點生命值' }
+            ];
+
+            const shuffled = upgrades.sort(() => 0.5 - Math.random()).slice(0, 3);
+            shuffled.forEach(upg => {
+                const btn = document.createElement('button');
+                btn.className = 'w-full bg-slate-700 hover:bg-blue-600 text-white p-4 rounded-lg text-left transition transform hover:scale-105 pointer-auto';
+                btn.innerHTML = `<div class="font-bold text-lg">${upg.name}</div><div class="text-sm opacity-80">${upg.desc}</div>`;
+                btn.onclick = () => {
+                    upg.effect();
+                    levelUpMenu.classList.add('hidden');
+                    isPaused = false;
+                    updateUI();
+                };
+                upgradeOptionsContainer.appendChild(btn);
+            });
+        }
+
+        function updateUI() {
+            const progress = (player.exp / player.nextLevelExp) * 100;
+            expBar.style.width = `${progress}%`;
+            levelDisplay.innerText = `等級: ${player.level}`;
+            scoreDisplay.innerText = `擊殺: ${score}`;
+        }
+
+        function updateTimer() {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            const m = Math.floor(elapsed / 60).toString().padStart(2, '0');
+            const s = (elapsed % 60).toString().padStart(2, '0');
+            timerDisplay.innerText = `時間: ${m}:${s}`;
+        }
+
+        function endGame() {
+            gameActive = false;
+            document.getElementById('gameOverMenu').classList.remove('hidden');
+            document.getElementById('finalStats').innerText = `你在裂隙中堅持了 ${timerDisplay.innerText.replace('時間: ', '')}，共消滅了 ${score} 名時空怪物。`;
+        }
+
+        function gameLoop() {
+            if (!gameActive || isPaused) {
+                requestAnimationFrame(gameLoop);
+                return;
+            }
+
+            ctx.clearRect(0, 0, width, height);
+            
+            // 繪製格線背景
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+            ctx.lineWidth = 1;
+            const gridSize = 60;
+            for(let x = 0; x < width; x += gridSize) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,height); ctx.stroke(); }
+            for(let y = 0; y < height; y += gridSize) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(width,y); ctx.stroke(); }
+
+            // 移動邏輯
+            let mx = 0, my = 0;
+            if (keys['ArrowUp'] || keys['KeyW']) my -= 1;
+            if (keys['ArrowDown'] || keys['KeyS']) my += 1;
+            if (keys['ArrowLeft'] || keys['KeyA']) mx -= 1;
+            if (keys['ArrowRight'] || keys['KeyD']) mx += 1;
+            if (joystick.active) { mx = joystick.currentX; my = joystick.currentY; }
+
+            if (mx !== 0 || my !== 0) {
+                const angle = Math.atan2(my, mx);
+                player.x = Math.max(player.radius, Math.min(width - player.radius, player.x + Math.cos(angle) * player.speed));
+                player.y = Math.max(player.radius, Math.min(height - player.radius, player.y + Math.sin(angle) * player.speed));
+            }
+
+            autoShoot();
+
+            gems = gems.filter(gem => !gem.update());
+            gems.forEach(gem => gem.draw());
+
+            // 子彈與碰撞
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                b.update();
+                b.draw();
+
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    const e = enemies[j];
+                    const dist = Math.sqrt((b.x-e.x)**2 + (b.y-e.y)**2);
+                    if (dist < b.radius + e.radius && !b.hitEnemies.has(e)) {
+                        e.hp -= b.damage;
+                        b.hitEnemies.add(e);
+                        b.pierceCount--;
+
+                        if (e.hp <= 0) {
+                            score++;
+                            gems.push(new Gem(e.x, e.y));
+                            enemies.splice(j, 1);
+                        }
+                        
+                        if (b.pierceCount < 0) {
+                            bullets.splice(i, 1);
+                            break;
+                        }
+                    }
+                }
+
+                if (bullets[i] && (b.x < -100 || b.x > width + 100 || b.y < -100 || b.y > height + 100)) {
+                    bullets.splice(i, 1);
+                }
+            }
+
+            if (frameCount % 45 === 0) spawnEnemy();
+            enemies.forEach(e => {
+                e.update();
+                e.draw();
+            });
+
+            // 繪製玩家與血條
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fillStyle = player.color;
+            ctx.fill();
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = player.color;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // 血條外框
+            const barW = 50;
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(player.x - barW/2, player.y - 35, barW, 6);
+            // 當前血量
+            ctx.fillStyle = player.hp > player.maxHp * 0.3 ? '#10b981' : '#ef4444';
+            ctx.fillRect(player.x - barW/2, player.y - 35, (Math.max(0, player.hp) / player.maxHp) * barW, 6);
+            // 數值顯示
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 10px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(`${Math.ceil(player.hp)} / ${player.maxHp}`, player.x, player.y - 40);
+
+            frameCount++;
+            updateTimer();
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.onload = () => {
+            updateUI();
+            gameLoop();
+        };
+
+    </script>
+</body>
+</html>

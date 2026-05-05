@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>雙人點擊搶答 Emoji 知識王 ⚔️</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        
+        body {
+            font-family: 'Noto+Sans+TC', sans-serif;
+            background-color: #0f172a;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            color: white;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* 搶答區域 */
+        .buzz-zone {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            font-weight: 900;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .p1-zone { background-color: #1e3a8a; border-bottom: 2px solid rgba(255,255,255,0.1); }
+        .p2-zone { background-color: #7f1d1d; border-top: 2px solid rgba(255,255,255,0.1); }
+
+        .p1-zone:active { background-color: #2563eb; }
+        .p2-zone:active { background-color: #dc2626; }
+
+        .buzz-text {
+            pointer-events: none;
+            opacity: 0.6;
+        }
+
+        /* 中間資訊欄 */
+        .info-bar {
+            background-color: #1e293b;
+            padding: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        /* 答題畫面彈窗 */
+        #quiz-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(15, 23, 42, 0.95);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            padding: 20px;
+        }
+
+        .option-btn {
+            width: 100%;
+            max-width: 500px;
+            padding: 20px;
+            margin: 10px 0;
+            background: rgba(255,255,255,0.1);
+            border: 2px solid rgba(255,255,255,0.2);
+            border-radius: 1rem;
+            font-size: 1.25rem;
+            font-weight: bold;
+            text-align: left;
+            transition: all 0.2s;
+        }
+
+        .correct { background-color: #10b981 !important; border-color: #059669; }
+        .wrong { background-color: #ef4444 !important; border-color: #dc2626; }
+
+        .score-pill {
+            padding: 5px 15px;
+            border-radius: 999px;
+            font-weight: 900;
+        }
+
+        #bgm-toggle {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 200;
+            background: white;
+            color: black;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+
+        @keyframes steal-float {
+            0% { transform: translateY(0); opacity: 1; }
+            100% { transform: translateY(-50px); opacity: 0; }
+        }
+        .steal-anim {
+            position: absolute;
+            animation: steal-float 1s forwards;
+            font-weight: 900;
+            color: #fbbf24;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="bgm-toggle" onclick="toggleMusic()">🔇</div>
+    <audio id="bg-music" loop>
+        <source src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3" type="audio/mpeg">
+    </audio>
+
+    <!-- 玩家 1 搶答區 (上) -->
+    <div id="p1-zone" class="buzz-zone p1-zone" onclick="handleBuzz(1)">
+        <div class="buzz-text">點我搶答 🟦</div>
+        <div id="p1-score-display" class="absolute top-4 left-4 text-sm font-bold opacity-80 text-white">Player 1 Score: 0</div>
+    </div>
+
+    <!-- 中間資訊列 -->
+    <div class="info-bar">
+        <div id="category-display" class="font-bold text-sm bg-gray-700 px-3 py-1 rounded">準備開始...</div>
+        <div id="timer-display" class="text-yellow-400 font-black text-xl">⏱️ 10s</div>
+        <div id="p2-score-display" class="text-sm font-bold opacity-80">Player 2 Score: 0</div>
+    </div>
+
+    <!-- 玩家 2 搶答區 (下) -->
+    <div id="p2-zone" class="buzz-zone p2-zone" onclick="handleBuzz(2)">
+        <div class="buzz-text">點我搶答 🟥</div>
+    </div>
+
+    <!-- 題目與選項彈窗 -->
+    <div id="quiz-overlay">
+        <div id="player-turn-indicator" class="mb-4 text-xl font-black px-6 py-2 rounded-full"></div>
+        <h2 id="question-text" class="text-2xl md:text-3xl font-bold text-center mb-8 px-4">題目載入中...</h2>
+        <div id="options-container" class="w-full flex flex-col items-center">
+            <!-- 選項 -->
+        </div>
+    </div>
+
+    <!-- 初始畫面 -->
+    <div id="start-overlay" class="fixed inset-0 bg-slate-900 z-[300] flex flex-col items-center justify-center p-6 text-center">
+        <div class="text-8xl mb-6">⚡</div>
+        <h1 class="text-5xl font-black mb-4">點擊搶答王</h1>
+        <p class="text-gray-400 mb-10">看到題目出現後，快點點擊你的半邊螢幕！<br>答對可搶奪對方的分數！💰</p>
+        <button onclick="startGame()" class="bg-indigo-600 hover:bg-indigo-700 px-12 py-4 rounded-full text-2xl font-bold shadow-2xl transition-transform hover:scale-110">
+            開始遊戲 🚀
+        </button>
+    </div>
+
+    <!-- 結算畫面 -->
+    <div id="result-overlay" class="fixed inset-0 bg-slate-900 z-[400] hidden flex flex-col items-center justify-center p-6 text-center">
+        <div id="winner-emoji" class="text-9xl mb-6">👑</div>
+        <h2 id="winner-text" class="text-4xl font-black mb-4 text-white">Player 1 獲勝！</h2>
+        <div class="text-3xl font-mono mb-10 text-indigo-400" id="final-score">100 : 50</div>
+        <button onclick="location.reload()" class="bg-white text-black px-10 py-4 rounded-full font-bold text-xl">
+            重新挑戰 🔄
+        </button>
+    </div>
+
+    <script>
+        // 音效系統
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playTone(freq, duration, type = 'sine', vol = 0.1) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+            osc.start(); osc.stop(audioCtx.currentTime + duration);
+        }
+
+        const sounds = {
+            buzz: () => playTone(400, 0.2, 'triangle', 0.2),
+            correct: () => { playTone(523, 0.3, 'sine'); setTimeout(()=>playTone(659, 0.3, 'sine'), 100); },
+            wrong: () => playTone(200, 0.4, 'sawtooth'),
+            tick: () => playTone(800, 0.05, 'sine', 0.05)
+        };
+
+        let p1Score = 0, p2Score = 0;
+        let gameState = 'start'; // start, buzzing, answering, paused
+        let currentQuestionIndex = 0;
+        let activePlayer = null;
+        let timeLeft = 10;
+        let timerInterval;
+
+        const questions = [
+            { cat: '地理 🌍', q: "哪一個國家被稱為「千島之國」？", options: ["🇮🇩 印尼", "🇵🇭 菲律賓", "🇯🇵 日本", "🇲🇻 馬爾地夫"], correct: 0 },
+            { cat: '歷史 📜', q: "工業革命最早起源於哪一個國家？", options: ["🇺🇸 美國", "🇬🇧 英國", "🇫🇷 法國", "🇩🇪 德國"], correct: 1 },
+            { cat: '公民 ⚖️', q: "我國中央政府負責「掌理監察」的機關是？", options: ["行政院", "立法院", "司法院", "監察院"], correct: 3 },
+            { cat: '地理 🌍', q: "世界面積最大的沙漠是？", options: ["戈壁沙漠", "撒哈拉沙漠", "塔克拉瑪干", "維多利亞沙漠"], correct: 1 },
+            { cat: '歷史 📜', q: "「絲路」在古代主要連接中國與哪裡？", options: ["🇰🇷 韓國", "🇯🇵 日本", "🇮🇳 印度/羅馬", "🇦🇺 澳洲"], correct: 2 },
+            { cat: '公民 ⚖️', q: "法律規定滿幾歲才具有「完全行為能力」？", options: ["16歲", "18歲", "20歲", "12歲"], correct: 1 },
+            { cat: '地理 🌍', q: "與台灣隔著巴士海峽相望的是哪個國家？", options: ["🇻🇳 越南", "🇵🇭 菲律賓", "🇲🇾 馬來西亞", "🇯🇵 日本"], correct: 1 },
+            { cat: '歷史 📜', q: "大航海時代，哥倫布發現了哪一塊新大陸？", options: ["美洲", "非洲", "亞洲", "南極洲"], correct: 0 }
+        ];
+
+        function startGame() {
+            document.getElementById('start-overlay').classList.add('hidden');
+            questions.sort(() => Math.random() - 0.5);
+            nextQuestion();
+        }
+
+        function nextQuestion() {
+            if (currentQuestionIndex >= questions.length) return showResults();
+            
+            gameState = 'buzzing';
+            activePlayer = null;
+            timeLeft = 10;
+            
+            document.getElementById('quiz-overlay').style.display = 'none';
+            document.getElementById('timer-display').textContent = `⏱️ ${timeLeft}s`;
+            
+            const q = questions[currentQuestionIndex];
+            document.getElementById('category-display').textContent = q.cat;
+            document.getElementById('question-text').textContent = q.q;
+
+            startTimer();
+        }
+
+        function startTimer() {
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                document.getElementById('timer-display').textContent = `⏱️ ${timeLeft}s`;
+                if (timeLeft <= 3 && timeLeft > 0) sounds.tick();
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    currentQuestionIndex++;
+                    nextQuestion();
+                }
+            }, 1000);
+        }
+
+        function handleBuzz(playerNum) {
+            if (gameState !== 'buzzing') return;
+            
+            gameState = 'answering';
+            activePlayer = playerNum;
+            clearInterval(timerInterval);
+            sounds.buzz();
+
+            // 顯示答題畫面
+            const overlay = document.getElementById('quiz-overlay');
+            const indicator = document.getElementById('player-turn-indicator');
+            overlay.style.display = 'flex';
+            
+            if (playerNum === 1) {
+                indicator.textContent = "P1 搶到了！請作答";
+                indicator.className = "mb-4 text-xl font-black px-6 py-2 rounded-full bg-blue-600 text-white";
+            } else {
+                indicator.textContent = "P2 搶到了！請作答";
+                indicator.className = "mb-4 text-xl font-black px-6 py-2 rounded-full bg-red-600 text-white";
+            }
+
+            const q = questions[currentQuestionIndex];
+            const container = document.getElementById('options-container');
+            container.innerHTML = '';
+            
+            q.options.forEach((opt, idx) => {
+                const btn = document.createElement('button');
+                btn.className = 'option-btn';
+                btn.textContent = opt;
+                btn.onclick = () => submitAnswer(idx, btn);
+                container.appendChild(btn);
+            });
+        }
+
+        function submitAnswer(choiceIndex, btn) {
+            if (gameState !== 'answering') return;
+            gameState = 'paused';
+
+            const q = questions[currentQuestionIndex];
+            const isCorrect = choiceIndex === q.correct;
+            const stealAmount = 30;
+
+            if (isCorrect) {
+                btn.classList.add('correct');
+                sounds.correct();
+                if (activePlayer === 1) {
+                    p1Score += 50;
+                    if (p2Score >= stealAmount) { p2Score -= stealAmount; showStealEffect(2); }
+                } else {
+                    p2Score += 50;
+                    if (p1Score >= stealAmount) { p1Score -= stealAmount; showStealEffect(1); }
+                }
+            } else {
+                btn.classList.add('wrong');
+                sounds.wrong();
+                // 顯示正確答案
+                document.getElementById('options-container').children[q.correct].classList.add('correct');
+                // 懲罰
+                if (activePlayer === 1) p1Score = Math.max(0, p1Score - 20);
+                else p2Score = Math.max(0, p2Score - 20);
+            }
+
+            updateScoreUI();
+
+            setTimeout(() => {
+                currentQuestionIndex++;
+                nextQuestion();
+            }, 2000);
+        }
+
+        function updateScoreUI() {
+            document.getElementById('p1-score-display').textContent = `Player 1 Score: ${p1Score}`;
+            document.getElementById('p2-score-display').textContent = `Player 2 Score: ${p2Score}`;
+        }
+
+        function showStealEffect(targetPlayer) {
+            const zone = document.getElementById(`p${targetPlayer}-zone`);
+            const anim = document.createElement('div');
+            anim.className = 'steal-anim';
+            anim.textContent = '-30 💸';
+            anim.style.left = '50%';
+            anim.style.top = '50%';
+            zone.appendChild(anim);
+            setTimeout(() => anim.remove(), 1000);
+        }
+
+        function showResults() {
+            document.getElementById('quiz-overlay').style.display = 'none';
+            const res = document.getElementById('result-overlay');
+            res.classList.remove('hidden');
+            
+            const winnerText = document.getElementById('winner-text');
+            const scoreText = document.getElementById('final-score');
+            const winnerEmoji = document.getElementById('winner-emoji');
+
+            scoreText.textContent = `${p1Score} : ${p2Score}`;
+
+            if (p1Score > p2Score) {
+                winnerText.textContent = "Player 1 勝利！🏆";
+                winnerEmoji.textContent = "🥇";
+            } else if (p2Score > p1Score) {
+                winnerText.textContent = "Player 2 勝利！🏆";
+                winnerEmoji.textContent = "🥇";
+            } else {
+                winnerText.textContent = "雙方平手！🤝";
+                winnerEmoji.textContent = "⚖️";
+            }
+        }
+
+        // 背景音樂
+        let isMusicPlaying = false;
+        function toggleMusic() {
+            const bgMusic = document.getElementById('bg-music');
+            const btn = document.getElementById('bgm-toggle');
+            if (isMusicPlaying) {
+                bgMusic.pause();
+                btn.textContent = '🔇';
+            } else {
+                bgMusic.play().catch(() => {});
+                btn.textContent = '🔊';
+            }
+            isMusicPlaying = !isMusicPlaying;
+        }
+    </script>
+</body>
+</html>

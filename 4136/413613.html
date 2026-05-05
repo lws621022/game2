@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>試管顏色分配 - 擬真實驗室</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --bg-color: #020617;
+            --tube-border: rgba(255, 255, 255, 0.2);
+            --liquid-width: 45px;
+            --tube-height: 150px;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: white;
+            font-family: 'Inter', system-ui, sans-serif;
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+
+        .game-area {
+            perspective: 1000px;
+            display: flex;
+            flex-direction: column;
+            gap: 40px;
+            align-items: center;
+        }
+
+        .tube-row {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            width: 100%;
+        }
+
+        .tube-wrapper {
+            position: relative;
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 10;
+        }
+
+        .tube {
+            width: var(--liquid-width);
+            height: var(--tube-height);
+            border: 3px solid var(--tube-border);
+            border-top: none;
+            border-bottom-left-radius: 25px;
+            border-bottom-right-radius: 25px;
+            position: relative;
+            display: flex;
+            flex-direction: column-reverse;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.03);
+            overflow: hidden;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+
+        .tube.selected {
+            border-color: #38bdf8;
+            box-shadow: 0 0 20px rgba(56, 189, 248, 0.6);
+            transform: translateY(-15px);
+        }
+
+        .tube.hint-highlight {
+            animation: pulse-hint 1s infinite alternate;
+        }
+
+        @keyframes pulse-hint {
+            from { border-color: rgba(255, 255, 255, 0.2); box-shadow: none; }
+            to { border-color: #facc15; box-shadow: 0 0 15px #facc15; }
+        }
+
+        .liquid-segment {
+            width: 100%;
+            height: 25%;
+            transition: height 0.5s ease-in-out;
+            position: relative;
+        }
+
+        #pouring-stream {
+            position: fixed;
+            width: 6px;
+            pointer-events: none;
+            z-index: 100;
+            border-radius: 3px;
+            transition: opacity 0.2s;
+            opacity: 0;
+        }
+
+        .victory-modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 200;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            backdrop-filter: blur(8px);
+        }
+
+        /* 倒水動畫：先移至上方，再傾斜 */
+        .pour-animation {
+            z-index: 50 !important;
+        }
+
+        .confetti {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            animation: fall 3s linear infinite;
+        }
+
+        @keyframes fall {
+            to { transform: translateY(100vh) rotate(720deg); }
+        }
+
+        #toast {
+            position: fixed;
+            bottom: 100px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 8px 20px;
+            border-radius: 20px;
+            backdrop-filter: blur(5px);
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+
+        #hint-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            filter: grayscale(1);
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div id="pouring-stream"></div>
+
+    <div class="text-center mb-8">
+        <h1 class="text-3xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500 mb-1">試管顏色分配</h1>
+        <div class="flex items-center justify-center gap-2 text-slate-500 text-xs">
+            <span class="px-2 py-0.5 bg-slate-800 rounded">實驗室模式</span>
+            <span>分類所有顏色以完成實驗</span>
+        </div>
+    </div>
+
+    <div id="game-container" class="game-area w-full max-w-4xl">
+        <div id="row-top" class="tube-row"></div>
+        <div id="row-bottom" class="tube-row"></div>
+    </div>
+
+    <div id="toast">提示訊息</div>
+
+    <div class="mt-10 flex gap-4">
+        <button id="hint-btn" class="px-8 py-3 bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/50 text-yellow-500 rounded-2xl transition-all font-bold flex flex-col items-center leading-tight">
+            <span class="flex items-center gap-2">💡 實驗提示</span>
+            <span id="hint-count" class="text-[10px] uppercase tracking-wider opacity-70">剩餘 2 次</span>
+        </button>
+        <button id="reset-btn" class="px-8 py-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-2xl transition-all font-medium text-slate-300">
+            重置實驗
+        </button>
+    </div>
+
+    <div id="victory-modal" class="victory-modal">
+        <div class="text-center p-10 bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl">
+            <h2 class="text-5xl font-black text-white mb-2">實驗成功</h2>
+            <p class="text-cyan-400 font-mono mb-8">COLOR SPECTRUM ALIGNED</p>
+            <button onclick="resetGame()" class="px-10 py-4 bg-cyan-500 hover:bg-cyan-400 text-slate-900 rounded-2xl text-xl font-bold transition-transform active:scale-95">進行下一項分析</button>
+        </div>
+    </div>
+
+    <script>
+        const COLORS = {
+            'R': '#ff4d4d', 'B': '#2e86de', 'G': '#1dd1a1', 
+            'Y': '#feca57', 'P': '#a29bfe', 'O': '#ff9f43',
+            'C': '#00d2d3', 'M': '#ff9ff3'
+        };
+
+        const CAPACITY = 4;
+        const NUM_COLOR_TYPES = 8;
+        const NUM_EMPTY_TUBES = 2;
+        const MAX_HINTS = 2;
+
+        let tubesData = [];
+        let selectedIndex = null;
+        let isAnimating = false;
+        let hintsRemaining = MAX_HINTS;
+
+        // 音效
+        let audioCtx = null;
+        function playPourSound() {
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(150, audioCtx.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 0.6);
+                
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.6);
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.6);
+                
+                const bufferSize = audioCtx.sampleRate * 0.6;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+                const noiseGain = audioCtx.createGain();
+                noiseGain.gain.setValueAtTime(0.02, audioCtx.currentTime);
+                noiseGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+                
+                noise.connect(noiseGain);
+                noiseGain.connect(audioCtx.destination);
+                noise.start();
+            } catch (e) { console.log("Audio not supported"); }
+        }
+
+        function initGame() {
+            const keys = Object.keys(COLORS).slice(0, NUM_COLOR_TYPES);
+            let pool = [];
+            keys.forEach(k => {
+                for (let i = 0; i < CAPACITY; i++) pool.push(k);
+            });
+            pool.sort(() => Math.random() - 0.5);
+
+            tubesData = [];
+            for (let i = 0; i < NUM_COLOR_TYPES; i++) {
+                tubesData.push(pool.slice(i * CAPACITY, (i + 1) * CAPACITY));
+            }
+            for (let i = 0; i < NUM_EMPTY_TUBES; i++) {
+                tubesData.push([]);
+            }
+            
+            hintsRemaining = MAX_HINTS;
+            updateHintUI();
+            render();
+        }
+
+        function updateHintUI() {
+            const btn = document.getElementById('hint-btn');
+            const countLabel = document.getElementById('hint-count');
+            countLabel.innerText = `剩餘 ${hintsRemaining} 次`;
+            btn.disabled = (hintsRemaining <= 0);
+        }
+
+        function render() {
+            const rowTop = document.getElementById('row-top');
+            const rowBottom = document.getElementById('row-bottom');
+            rowTop.innerHTML = '';
+            rowBottom.innerHTML = '';
+
+            const mid = Math.ceil(tubesData.length / 2);
+
+            tubesData.forEach((colors, index) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'tube-wrapper';
+                wrapper.id = `tube-w-${index}`;
+
+                const tubeDiv = document.createElement('div');
+                tubeDiv.className = `tube ${selectedIndex === index ? 'selected' : ''}`;
+                tubeDiv.onclick = () => handleTubeClick(index);
+
+                colors.forEach(c => {
+                    const segment = document.createElement('div');
+                    segment.className = 'liquid-segment';
+                    segment.style.backgroundColor = COLORS[c];
+                    tubeDiv.appendChild(segment);
+                });
+
+                wrapper.appendChild(tubeDiv);
+                if (index < mid) rowTop.appendChild(wrapper);
+                else rowBottom.appendChild(wrapper);
+            });
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            toast.innerText = msg;
+            toast.style.opacity = '1';
+            setTimeout(() => toast.style.opacity = '0', 2000);
+        }
+
+        function getHint() {
+            if (isAnimating || hintsRemaining <= 0) return;
+            
+            document.querySelectorAll('.tube').forEach(t => t.classList.remove('hint-highlight'));
+
+            let foundMove = false;
+            for (let i = 0; i < tubesData.length; i++) {
+                if (tubesData[i].length === 0) continue;
+                if (tubesData[i].length === CAPACITY && tubesData[i].every(c => c === tubesData[i][0])) continue;
+
+                for (let j = 0; j < tubesData.length; j++) {
+                    if (i === j) continue;
+                    
+                    const fromTube = tubesData[i];
+                    const toTube = tubesData[j];
+                    const color = fromTube[fromTube.length - 1];
+
+                    const canMove = toTube.length < CAPACITY && (toTube.length === 0 || toTube[toTube.length - 1] === color);
+                    
+                    if (canMove) {
+                        const fromEl = document.querySelector(`#tube-w-${i} .tube`);
+                        const toEl = document.querySelector(`#tube-w-${j} .tube`);
+                        fromEl.classList.add('hint-highlight');
+                        toEl.classList.add('hint-highlight');
+                        
+                        hintsRemaining--;
+                        updateHintUI();
+                        showToast("💡 發現可行步驟！");
+                        foundMove = true;
+                        return;
+                    }
+                }
+            }
+            
+            if (!foundMove) {
+                showToast("目前無法提示，請返回上一步或重置");
+            }
+        }
+
+        async function handleTubeClick(index) {
+            if (isAnimating) return;
+            document.querySelectorAll('.tube').forEach(t => t.classList.remove('hint-highlight'));
+
+            if (selectedIndex === null) {
+                if (tubesData[index].length > 0) {
+                    selectedIndex = index;
+                    render();
+                }
+            } else {
+                if (selectedIndex === index) {
+                    selectedIndex = null;
+                    render();
+                } else {
+                    const from = selectedIndex;
+                    const to = index;
+                    const success = await attemptMove(from, to);
+                    selectedIndex = null;
+                    if (!success) render();
+                }
+            }
+        }
+
+        async function attemptMove(from, to) {
+            const fromTube = tubesData[from];
+            const toTube = tubesData[to];
+
+            if (fromTube.length === 0 || toTube.length >= CAPACITY) return false;
+            const colorToMove = fromTube[fromTube.length - 1];
+            if (toTube.length > 0 && toTube[toTube.length - 1] !== colorToMove) return false;
+
+            let count = 0;
+            for (let i = fromTube.length - 1; i >= 0; i--) {
+                if (fromTube[i] === colorToMove) count++;
+                else break;
+            }
+            const moveAmount = Math.min(count, CAPACITY - toTube.length);
+            
+            isAnimating = true;
+            await playPourAnimation(from, to, colorToMove, moveAmount);
+            
+            for (let i = 0; i < moveAmount; i++) {
+                toTube.push(fromTube.pop());
+            }
+            
+            isAnimating = false;
+            render();
+            checkVictory();
+            return true;
+        }
+
+        function playPourAnimation(fromIdx, toIdx, color, amount) {
+            return new Promise(resolve => {
+                const fromEl = document.getElementById(`tube-w-${fromIdx}`);
+                const toEl = document.getElementById(`tube-w-${toIdx}`);
+                const fromRect = fromEl.getBoundingClientRect();
+                const toRect = toEl.getBoundingClientRect();
+                const stream = document.getElementById('pouring-stream');
+
+                // 1. 移動起始管到目標管上方
+                const deltaX = toRect.left - fromRect.left;
+                const deltaY = toRect.top - fromRect.top - 170; // 停在上方一點點
+                
+                fromEl.style.zIndex = "150";
+                fromEl.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+
+                // 等待位移動畫完成後開始倒水
+                setTimeout(() => {
+                    const direction = toRect.left < fromRect.left ? 'left' : 'right';
+                    
+                    // 2. 傾斜試管
+                    fromEl.style.transform = `translate(${deltaX}px, ${deltaY}px) rotate(${direction === 'left' ? -75 : 75}deg)`;
+                    
+                    // 播放聲音
+                    playPourSound();
+
+                    // 3. 顯示液體流
+                    const updatedFromRect = fromEl.getBoundingClientRect();
+                    const streamX = updatedFromRect.left + (updatedFromRect.width / 2);
+                    const streamY = updatedFromRect.top + (updatedFromRect.height / 2);
+                    
+                    stream.style.backgroundColor = COLORS[color];
+                    stream.style.left = `${streamX - 3}px`;
+                    stream.style.top = `${streamY}px`;
+                    stream.style.height = `${toRect.top - streamY + 5}px`;
+                    stream.style.opacity = '1';
+                    
+                    // 液體動態改變
+                    const fromSegments = fromEl.querySelectorAll('.liquid-segment');
+                    const toTubeEl = toEl.querySelector('.tube');
+                    
+                    for(let i=0; i<amount; i++) {
+                        if(fromSegments[fromSegments.length-1-i]) {
+                            fromSegments[fromSegments.length-1-i].style.height = '0';
+                        }
+                    }
+
+                    for(let i=0; i<amount; i++) {
+                        const newSeg = document.createElement('div');
+                        newSeg.className = 'liquid-segment';
+                        newSeg.style.backgroundColor = COLORS[color];
+                        newSeg.style.height = '0';
+                        toTubeEl.appendChild(newSeg);
+                        setTimeout(() => newSeg.style.height = '25%', 50);
+                    }
+
+                    // 4. 動畫結束歸位
+                    setTimeout(() => {
+                        stream.style.opacity = '0';
+                        fromEl.style.transform = "";
+                        fromEl.style.zIndex = "10";
+                        setTimeout(resolve, 500);
+                    }, 800);
+
+                }, 500);
+            });
+        }
+
+        function checkVictory() {
+            const isWin = tubesData.every(tube => {
+                if (tube.length === 0) return true;
+                if (tube.length === CAPACITY) {
+                    return tube.every(c => c === tube[0]);
+                }
+                return false;
+            });
+
+            if (isWin) {
+                setTimeout(() => {
+                    victoryModal.style.display = 'flex';
+                    createConfetti();
+                }, 500);
+            }
+        }
+
+        function createConfetti() {
+            for (let i = 0; i < 60; i++) {
+                const conf = document.createElement('div');
+                conf.className = 'confetti';
+                conf.style.left = Math.random() * 100 + 'vw';
+                conf.style.backgroundColor = Object.values(COLORS)[Math.floor(Math.random() * 8)];
+                conf.style.animationDelay = Math.random() * 2 + 's';
+                document.body.appendChild(conf);
+                setTimeout(() => conf.remove(), 3000);
+            }
+        }
+
+        function resetGame() {
+            victoryModal.style.display = 'none';
+            selectedIndex = null;
+            isAnimating = false;
+            initGame();
+        }
+
+        document.getElementById('reset-btn').onclick = resetGame;
+        document.getElementById('hint-btn').onclick = getHint;
+        window.onload = initGame;
+    </script>
+</body>
+</html>

@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全亮版圍欄追逐戰</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #2c3e50;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            font-family: '微軟正黑體', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            flex-direction: column;
+        }
+
+        #game-wrapper {
+            position: relative;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+            border-radius: 10px;
+        }
+
+        canvas {
+            background-color: #8da399; /* 帶點綠色的水泥地感覺 */
+            border: 6px solid #1a252f;
+            border-radius: 10px;
+            display: block;
+        }
+
+        /* 介面疊層 */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(0, 0, 0, 0.85);
+            border-radius: 10px;
+            z-index: 10;
+            text-align: center;
+            cursor: pointer;
+        }
+
+        /* HUD (抬頭顯示器) 顯示生命值 */
+        #hud {
+            position: absolute;
+            top: 15px;
+            left: 20px;
+            font-size: 26px;
+            font-weight: bold;
+            color: #ff4757;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 5;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(0,0,0,0.4);
+            padding: 5px 15px;
+            border-radius: 8px;
+            border: 2px solid #ff4757;
+        }
+
+        h1 {
+            color: #ff4757;
+            margin-bottom: 10px;
+            font-size: 48px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px #ff0000;
+        }
+
+        p {
+            font-size: 20px;
+            color: #ecf0f1;
+            margin-bottom: 5px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .btn {
+            margin-top: 30px;
+            padding: 12px 30px;
+            font-size: 20px;
+            font-weight: bold;
+            background-color: #ff4757;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .btn:hover {
+            background-color: #ff6b81;
+            transform: scale(1.05);
+        }
+
+        /* 受傷閃爍 */
+        @keyframes damageFlash {
+            0% { background-color: rgba(255, 0, 0, 0.5); }
+            100% { background-color: transparent; }
+        }
+        .damage-effect {
+            animation: damageFlash 0.3s ease-out;
+        }
+        
+        #damage-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            border-radius: 10px;
+            z-index: 4;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="game-wrapper">
+        <div id="hud" class="hidden">
+            <span>❤️ 生命:</span>
+            <span id="lives-display">15</span>
+        </div>
+        <div id="damage-overlay"></div>
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        
+        <div id="ui-layer">
+            <h1 id="title-text">恐怖圍欄追逐戰</h1>
+            <p id="sub-text">使用 <b>上 下 左 右</b> 鍵移動。</p>
+            <p>殭屍正在鎖定你！利用場地中的圍欄甩開它。</p>
+            <button class="btn" id="start-btn">點擊開始</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const uiLayer = document.getElementById('ui-layer');
+        const titleText = document.getElementById('title-text');
+        const subText = document.getElementById('sub-text');
+        const startBtn = document.getElementById('start-btn');
+        const hud = document.getElementById('hud');
+        const livesDisplay = document.getElementById('lives-display');
+        const damageOverlay = document.getElementById('damage-overlay');
+
+        let gameState = 'START';
+        let animationId;
+        const maxLives = 15;
+
+        // 定義所有牆壁/圍欄障礙物 (包含外框和內部迷宮)
+        const walls = [
+            // 外圍邊界
+            { x: 0, y: 0, w: 800, h: 20 },
+            { x: 0, y: 580, w: 800, h: 20 },
+            { x: 0, y: 0, w: 20, h: 600 },
+            { x: 780, y: 0, w: 20, h: 600 },
+            // 內部圍欄 (創造追逐路徑)
+            { x: 150, y: 150, w: 200, h: 40 }, // 左上水平
+            { x: 450, y: 150, w: 200, h: 40 }, // 右上水平
+            { x: 150, y: 410, w: 200, h: 40 }, // 左下水平
+            { x: 450, y: 410, w: 200, h: 40 }, // 右下水平
+            { x: 380, y: 250, w: 40, h: 100 }, // 正中央垂直柱
+            { x: 150, y: 190, w: 40, h: 120 }, // 左側延伸
+            { x: 610, y: 290, w: 40, h: 120 }  // 右側延伸
+        ];
+
+        // 玩家設定
+        const player = {
+            x: 80,
+            y: 80,
+            radius: 16,
+            speed: 4.5,
+            icon: '🕵️',
+            lives: maxLives,
+            invulnerable: false,
+            invulnerableTimer: 0
+        };
+
+        // 敵人設定 (殭屍)
+        const enemy = {
+            x: 720,
+            y: 520,
+            radius: 18,
+            speed: 3.2, // 速度比玩家慢，必須依賴抄捷徑或玩家失誤
+            icon: '🧟'
+        };
+
+        // 按鍵狀態
+        const keys = {
+            ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
+            w: false, a: false, s: false, d: false
+        };
+
+        window.addEventListener('keydown', (e) => { if (keys.hasOwnProperty(e.key)) keys[e.key] = true; });
+        window.addEventListener('keyup', (e) => { if (keys.hasOwnProperty(e.key)) keys[e.key] = false; });
+
+        uiLayer.addEventListener('click', () => {
+            if (gameState === 'START' || gameState === 'GAMEOVER') resetGame();
+        });
+
+        function resetGame() {
+            player.x = 80;
+            player.y = 80;
+            player.lives = maxLives;
+            player.invulnerable = false;
+            updateHud();
+            
+            // 敵人出生在對角線遠處
+            enemy.x = 720;
+            enemy.y = 520;
+            
+            gameState = 'PLAYING';
+            uiLayer.classList.add('hidden');
+            hud.classList.remove('hidden');
+            
+            if (animationId) cancelAnimationFrame(animationId);
+            gameLoop();
+        }
+
+        function updateHud() {
+            livesDisplay.innerText = player.lives;
+        }
+
+        function triggerDamage() {
+            player.lives--;
+            updateHud();
+            
+            damageOverlay.classList.remove('damage-effect');
+            void damageOverlay.offsetWidth;
+            damageOverlay.classList.add('damage-effect');
+
+            if (player.lives <= 0) {
+                gameOver();
+            } else {
+                player.invulnerable = true;
+                player.invulnerableTimer = 90; // 給予更長一點的無敵時間 (約1.5秒) 以便逃脫
+            }
+        }
+
+        function gameOver() {
+            gameState = 'GAMEOVER';
+            uiLayer.classList.remove('hidden');
+            hud.classList.add('hidden');
+            titleText.innerText = "你被抓到了";
+            subText.innerText = "無路可退，你的生命已耗盡！";
+            startBtn.innerText = "再次嘗試逃生";
+        }
+
+        // 檢查圓形實體與任何牆壁的碰撞
+        function checkWallCollision(entity) {
+            for (let wall of walls) {
+                // 找出矩形上最接近圓心的點
+                let testX = entity.x;
+                let testY = entity.y;
+
+                if (entity.x < wall.x) testX = wall.x;
+                else if (entity.x > wall.x + wall.w) testX = wall.x + wall.w;
+
+                if (entity.y < wall.y) testY = wall.y;
+                else if (entity.y > wall.y + wall.h) testY = wall.y + wall.h;
+
+                let distX = entity.x - testX;
+                let distY = entity.y - testY;
+                let distance = Math.sqrt((distX * distX) + (distY * distY));
+
+                if (distance < entity.radius) {
+                    return true; // 發生碰撞
+                }
+            }
+            return false;
+        }
+
+        function updatePlayer() {
+            // 分開處理 X 軸與 Y 軸移動，實現「沿著牆壁滑行」的手感
+            let prevX = player.x;
+            if (keys.ArrowLeft || keys.a) player.x -= player.speed;
+            if (keys.ArrowRight || keys.d) player.x += player.speed;
+            if (checkWallCollision(player)) player.x = prevX; // 若 X 軸碰撞則退回
+
+            let prevY = player.y;
+            if (keys.ArrowUp || keys.w) player.y -= player.speed;
+            if (keys.ArrowDown || keys.s) player.y += player.speed;
+            if (checkWallCollision(player)) player.y = prevY; // 若 Y 軸碰撞則退回
+
+            // 更新無敵倒數
+            if (player.invulnerable) {
+                player.invulnerableTimer--;
+                if (player.invulnerableTimer <= 0) player.invulnerable = false;
+            }
+        }
+
+        // 殭屍追逐 AI 邏輯
+        function updateEnemy() {
+            // 計算殭屍到玩家的向量
+            let dx = player.x - enemy.x;
+            let dy = player.y - enemy.y;
+            let distance = Math.hypot(dx, dy);
+
+            if (distance > 0) {
+                // 將向量標準化並乘上速度
+                let vx = (dx / distance) * enemy.speed;
+                let vy = (dy / distance) * enemy.speed;
+
+                // 殭屍同樣分開處理 X 與 Y 軸，讓它撞到牆時能「滑行」繞過障礙
+                let prevX = enemy.x;
+                enemy.x += vx;
+                if (checkWallCollision(enemy)) enemy.x = prevX;
+
+                let prevY = enemy.y;
+                enemy.y += vy;
+                if (checkWallCollision(enemy)) enemy.y = prevY;
+            }
+        }
+
+        function checkEntityCollision() {
+            if (player.invulnerable) return;
+
+            let dx = player.x - enemy.x;
+            let dy = player.y - enemy.y;
+            let distance = Math.hypot(dx, dy);
+
+            if (distance < player.radius + enemy.radius - 5) { // 稍微縮減判定範圍，增加容錯
+                triggerDamage();
+            }
+        }
+
+        // 繪製地圖圍欄
+        function drawFences() {
+            for (let wall of walls) {
+                // 畫水泥基底
+                ctx.fillStyle = '#2c3e50';
+                ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
+                
+                // 畫黃黑相間的工業警告線 (頂部邊緣裝飾)
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#f1c40f';
+                ctx.beginPath();
+                ctx.moveTo(wall.x, wall.y + 4);
+                ctx.lineTo(wall.x + wall.w, wall.y + 4);
+                ctx.stroke();
+
+                ctx.strokeStyle = '#111';
+                ctx.strokeRect(wall.x, wall.y, wall.w, wall.h);
+            }
+        }
+
+        function gameLoop() {
+            if (gameState !== 'PLAYING') return;
+
+            // 1. 清理畫面
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 2. 更新邏輯
+            updatePlayer();
+            updateEnemy();
+            checkEntityCollision();
+
+            // 3. 畫出場景障礙
+            drawFences();
+
+            // 4. 畫出圖示
+            ctx.font = '36px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // 殭屍
+            ctx.fillText(enemy.icon, enemy.x, enemy.y);
+
+            // 主角 (受傷無敵閃爍)
+            if (player.invulnerable) {
+                if (Math.floor(Date.now() / 100) % 2 === 0) {
+                    ctx.fillText(player.icon, player.x, player.y);
+                }
+            } else {
+                ctx.fillText(player.icon, player.x, player.y);
+            }
+
+            animationId = requestAnimationFrame(gameLoop);
+        }
+
+    </script>
+</body>
+</html>

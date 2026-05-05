@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>戰艦射擊遊戲 - BOSS 二階段挑戰</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+            box-shadow: 0 0 20px rgba(0, 150, 255, 0.3);
+        }
+        .ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            pointer-events: none;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        .game-screen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 2.5rem;
+            border-radius: 1.5rem;
+            text-align: center;
+            color: white;
+            border: 2px solid #3b82f6;
+            display: none;
+            min-width: 320px;
+            z-index: 100;
+        }
+        #boss-ui {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 300px;
+            display: none;
+        }
+        .hp-bar-bg {
+            width: 100%;
+            height: 15px;
+            background: #333;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid #fff;
+        }
+        #boss-hp-fill {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, #ef4444, #f87171);
+            transition: width 0.2s;
+        }
+        button {
+            pointer-events: auto;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        button:hover {
+            transform: scale(1.05);
+            background-color: #2563eb;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    
+    <div class="ui-layer">
+        <div class="text-2xl font-bold mb-2">生命值: <span id="lives-display">❤️❤️❤️</span></div>
+        <div class="text-xl">得分: <span id="score-display">0</span> / 2000</div>
+    </div>
+
+    <!-- BOSS 血量條 -->
+    <div id="boss-ui">
+        <div id="boss-name" class="text-right text-red-500 font-bold mb-1">滅世級戰艦 BOSS (第一階段)</div>
+        <div class="hp-bar-bg">
+            <div id="boss-hp-fill"></div>
+        </div>
+    </div>
+
+    <div id="game-over-screen" class="game-screen">
+        <h1 class="text-4xl font-black mb-4 text-red-500">戰敗</h1>
+        <p class="text-xl mb-6">最終得分: <span id="final-score">0</span></p>
+        <button onclick="resetGame()" class="bg-blue-600 px-8 py-3 rounded-full font-bold text-lg">重新嘗試</button>
+    </div>
+
+    <div id="win-screen" class="game-screen">
+        <h1 class="text-4xl font-black mb-4 text-yellow-400">任務成功！</h1>
+        <p class="text-xl mb-6">你擊潰了 BOSS 的最終形態，拯救了世界！</p>
+        <p class="text-lg mb-6">得分: <span id="win-score">0</span></p>
+        <button onclick="resetGame()" class="bg-yellow-500 px-8 py-3 rounded-full font-bold text-lg text-black">再次挑戰</button>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const livesDisplay = document.getElementById('lives-display');
+    const scoreDisplay = document.getElementById('score-display');
+    const gameOverScreen = document.getElementById('game-over-screen');
+    const winScreen = document.getElementById('win-screen');
+    const bossUI = document.getElementById('boss-ui');
+    const bossHPFill = document.getElementById('boss-hp-fill');
+    const bossNameText = document.getElementById('boss-name');
+
+    let score = 0;
+    let lives = 3;
+    let gameActive = true;
+    let bossActive = false;
+    let keys = {};
+    const BOSS_TRIGGER_SCORE = 2000;
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    const player = {
+        x: 100,
+        y: canvas.height / 2,
+        width: 60,
+        height: 40,
+        speed: 7,
+        color: '#3b82f6'
+    };
+
+    const boss = {
+        x: 0,
+        y: 0,
+        width: 150,
+        height: 200,
+        hp: 30,
+        maxHp: 30,
+        speed: 3,
+        direction: 1,
+        active: false,
+        phase: 1,
+        lastShot: 0,
+        shotInterval: 1200,
+        laserActive: false,
+        laserCharge: 0, // 0 to 100
+        laserCooldown: 0
+    };
+
+    let missiles = [];
+    let bossMissiles = [];
+    let enemies = [];
+    let particles = [];
+
+    window.addEventListener('keydown', e => {
+        keys[e.code] = true;
+        if (e.code === 'Space' && gameActive) fireMissile();
+    });
+    window.addEventListener('keyup', e => keys[e.code] = false);
+
+    function fireMissile() {
+        missiles.push({
+            x: player.x + player.width,
+            y: player.y + player.height / 2 - 2,
+            width: 20,
+            height: 4,
+            speed: 12,
+            color: '#fbbf24'
+        });
+    }
+
+    function fireBossMissile() {
+        bossMissiles.push({
+            x: boss.x,
+            y: boss.y + Math.random() * boss.height,
+            width: 25,
+            height: 6,
+            speed: boss.phase === 1 ? -8 : -12,
+            color: '#ff0000'
+        });
+    }
+
+    function createEnemy() {
+        if (!gameActive || bossActive) return;
+        const size = 30 + Math.random() * 30;
+        enemies.push({
+            x: canvas.width + 100,
+            y: Math.random() * (canvas.height - size),
+            width: size,
+            height: size,
+            speed: 3 + Math.random() * 4,
+            color: '#ef4444'
+        });
+        setTimeout(createEnemy, 1000 + Math.random() * 1500);
+    }
+
+    function createExplosion(x, y, color, count = 15) {
+        for (let i = 0; i < count; i++) {
+            particles.push({
+                x: x,
+                y: y,
+                vx: (Math.random() - 0.5) * 12,
+                vy: (Math.random() - 0.5) * 12,
+                radius: Math.random() * 4,
+                life: 1,
+                color: color
+            });
+        }
+    }
+
+    function triggerBoss() {
+        bossActive = true;
+        boss.active = true;
+        boss.phase = 1;
+        boss.hp = 30;
+        boss.maxHp = 30;
+        boss.x = canvas.width + 200;
+        boss.y = canvas.height / 2 - boss.height / 2;
+        bossNameText.innerText = "滅世級戰艦 BOSS (第一階段)";
+        bossNameText.className = "text-right text-red-500 font-bold mb-1";
+        bossUI.style.display = 'block';
+    }
+
+    function triggerBossPhase2() {
+        boss.phase = 2;
+        boss.hp = 50;
+        boss.maxHp = 50;
+        boss.speed = 6; // 速度變快
+        boss.shotInterval = 800; // 射擊頻率增加
+        bossNameText.innerText = "滅世級戰艦 BOSS - 狂暴形態";
+        bossNameText.className = "text-right text-purple-500 font-bold mb-1 animate-pulse";
+        createExplosion(boss.x + boss.width/2, boss.y + boss.height/2, '#a855f7', 50);
+    }
+
+    function update() {
+        if (!gameActive) return;
+
+        if (keys['ArrowUp'] && player.y > 0) player.y -= player.speed;
+        if (keys['ArrowDown'] && player.y < canvas.height - player.height) player.y += player.speed;
+        if (keys['ArrowLeft'] && player.x > 0) player.x -= player.speed;
+        if (keys['ArrowRight'] && player.x < canvas.width / 2) player.x += player.speed;
+
+        if (!bossActive && score >= BOSS_TRIGGER_SCORE) triggerBoss();
+
+        if (boss.active) {
+            // 進場邏輯
+            if (boss.x > canvas.width - boss.width - 50) {
+                boss.x -= 2;
+            } else {
+                // 移動邏輯
+                boss.y += boss.speed * boss.direction;
+                // 二階段移動範圍更大
+                const margin = boss.phase === 1 ? 50 : 10;
+                if (boss.y <= margin || boss.y >= canvas.height - boss.height - margin) {
+                    boss.direction *= -1;
+                }
+
+                // 射擊邏輯
+                let now = Date.now();
+                if (now - boss.lastShot > boss.shotInterval) {
+                    fireBossMissile();
+                    boss.lastShot = now;
+                }
+
+                // 二階段雷射邏輯
+                if (boss.phase === 2) {
+                    if (!boss.laserActive) {
+                        boss.laserCooldown++;
+                        if (boss.laserCooldown > 180) { // 每隔一段時間準備發射
+                            boss.laserActive = true;
+                            boss.laserCharge = 0;
+                        }
+                    } else {
+                        boss.laserCharge += 1;
+                        // 雷射發射中 (Charge 60-100 為實際傷害時間)
+                        if (boss.laserCharge > 60 && boss.laserCharge < 100) {
+                            // 碰撞檢測：雷射
+                            const laserY = boss.y + boss.height / 2;
+                            if (player.y < laserY + 20 && player.y + player.height > laserY - 20 && player.x < boss.x) {
+                                // 為了避免一瞬間扣完生命，給予短暫無敵感，雷射每幀有幾率扣血或增加冷卻
+                                if (Math.random() < 0.05) handlePlayerHit();
+                            }
+                        }
+                        if (boss.laserCharge >= 130) { // 雷射結束
+                            boss.laserActive = false;
+                            boss.laserCooldown = 0;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 更新玩家飛彈
+        for (let i = missiles.length - 1; i >= 0; i--) {
+            let m = missiles[i];
+            m.x += m.speed;
+            let hit = false;
+            if (boss.active && m.x > boss.x && m.x < boss.x + boss.width &&
+                m.y > boss.y && m.y < boss.y + boss.height) {
+                createExplosion(m.x, m.y, '#fff', 5);
+                boss.hp--;
+                bossHPFill.style.width = Math.max(0, (boss.hp / boss.maxHp * 100)) + '%';
+                if (boss.hp <= 0) {
+                    if (boss.phase === 1) triggerBossPhase2();
+                    else winGame();
+                }
+                hit = true;
+            }
+            if (hit || m.x > canvas.width) missiles.splice(i, 1);
+        }
+
+        // 更新 BOSS 飛彈
+        for (let i = bossMissiles.length - 1; i >= 0; i--) {
+            let bm = bossMissiles[i];
+            bm.x += bm.speed;
+            if (bm.x < player.x + player.width && bm.x + bm.width > player.x &&
+                bm.y < player.y + player.height && bm.y + bm.height > player.y) {
+                createExplosion(player.x + player.width/2, player.y + player.height/2, '#3b82f6');
+                bossMissiles.splice(i, 1);
+                handlePlayerHit();
+            } else if (bm.x + bm.width < 0) bossMissiles.splice(i, 1);
+        }
+
+        // 更新小怪
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            let e = enemies[i];
+            e.x -= e.speed;
+            let enemyRemoved = false;
+            for (let j = missiles.length - 1; j >= 0; j--) {
+                let m = missiles[j];
+                if (m.x < e.x + e.width && m.x + m.width > e.x && m.y < e.y + e.height && m.y + m.height > e.y) {
+                    createExplosion(e.x + e.width / 2, e.y + e.height / 2, '#ef4444');
+                    enemies.splice(i, 1);
+                    missiles.splice(j, 1);
+                    score += 100;
+                    scoreDisplay.innerText = score;
+                    enemyRemoved = true;
+                    break;
+                }
+            }
+            if (enemyRemoved) continue;
+            if (player.x < e.x + e.width && player.x + player.width > e.x &&
+                player.y < e.y + e.height && player.y + player.height > e.y) {
+                createExplosion(player.x + player.width / 2, player.y + player.height / 2, '#3b82f6');
+                enemies.splice(i, 1);
+                handlePlayerHit();
+            } else if (e.x + e.width < 0) enemies.splice(i, 1);
+        }
+
+        for (let i = particles.length - 1; i >= 0; i--) {
+            let p = particles[i];
+            p.x += p.vx; p.y += p.vy; p.life -= 0.02;
+            if (p.life <= 0) particles.splice(i, 1);
+        }
+    }
+
+    function handlePlayerHit() {
+        if (!gameActive) return;
+        lives--;
+        if (lives < 0) lives = 0;
+        updateLivesDisplay();
+        if (lives <= 0) endGame();
+    }
+
+    function updateLivesDisplay() {
+        livesDisplay.innerText = '❤️'.repeat(Math.max(0, lives));
+    }
+
+    function endGame() {
+        gameActive = false;
+        document.getElementById('final-score').innerText = score;
+        gameOverScreen.style.display = 'block';
+    }
+
+    function winGame() {
+        gameActive = false;
+        boss.active = false;
+        createExplosion(boss.x + boss.width/2, boss.y + boss.height/2, '#ff4444', 150);
+        document.getElementById('win-score').innerText = score + 10000;
+        winScreen.style.display = 'block';
+        bossUI.style.display = 'none';
+    }
+
+    function resetGame() {
+        score = 0; lives = 3; gameActive = true; bossActive = false;
+        boss.active = false; boss.phase = 1; boss.hp = 30; boss.maxHp = 30;
+        boss.laserActive = false; boss.laserCooldown = 0;
+        missiles = []; bossMissiles = []; enemies = []; particles = [];
+        player.x = 100; player.y = canvas.height / 2;
+        scoreDisplay.innerText = score;
+        bossHPFill.style.width = '100%';
+        updateLivesDisplay();
+        gameOverScreen.style.display = 'none';
+        winScreen.style.display = 'none';
+        bossUI.style.display = 'none';
+        createEnemy();
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 背景星空
+        ctx.fillStyle = '#ffffff';
+        for(let i=0; i<40; i++) {
+            let x = (Date.now() * 0.03 + i * 150) % canvas.width;
+            ctx.fillRect(canvas.width - x, (i * 47) % canvas.height, 1.5, 1.5);
+        }
+
+        if (gameActive) {
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            ctx.moveTo(player.x, player.y);
+            ctx.lineTo(player.x + player.width, player.y + player.height / 2);
+            ctx.lineTo(player.x, player.y + player.height);
+            ctx.fill();
+            ctx.fillStyle = '#60a5fa';
+            ctx.fillRect(player.x - 10, player.y + player.height/4, 10, player.height/2);
+        }
+
+        // 玩家飛彈
+        missiles.forEach(m => {
+            ctx.fillStyle = m.color;
+            ctx.fillRect(m.x, m.y, m.width, m.height);
+        });
+
+        // BOSS 飛彈
+        bossMissiles.forEach(bm => {
+            ctx.fillStyle = bm.color;
+            ctx.shadowBlur = 10; ctx.shadowColor = 'red';
+            ctx.fillRect(bm.x, bm.y, bm.width, bm.height);
+            ctx.shadowBlur = 0;
+        });
+
+        // BOSS 雷射繪製
+        if (boss.active && boss.laserActive) {
+            const laserY = boss.y + boss.height / 2;
+            if (boss.laserCharge < 60) {
+                // 預警線
+                ctx.strokeStyle = 'rgba(255, 0, 0, 0.3)';
+                ctx.setLineDash([10, 10]);
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(boss.x, laserY);
+                ctx.lineTo(0, laserY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            } else if (boss.laserCharge < 100) {
+                // 實際雷射
+                ctx.fillStyle = '#ff0000';
+                ctx.shadowBlur = 20; ctx.shadowColor = '#ff0000';
+                ctx.fillRect(0, laserY - 15, boss.x, 30);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, laserY - 5, boss.x, 10);
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        if (boss.active) {
+            // BOSS 主體顏色隨階段變化
+            ctx.fillStyle = boss.phase === 1 ? '#991b1b' : '#581c87';
+            ctx.fillRect(boss.x, boss.y, boss.width, boss.height);
+            
+            ctx.fillStyle = '#450a0a';
+            ctx.fillRect(boss.x - 20, boss.y + 20, 30, 40);
+            ctx.fillRect(boss.x - 20, boss.y + boss.height - 60, 30, 40);
+            
+            // 核心發光
+            ctx.fillStyle = boss.phase === 1 ? '#f87171' : '#a855f7';
+            ctx.beginPath();
+            ctx.arc(boss.x + 40, boss.y + boss.height/2, 20, 0, Math.PI*2);
+            ctx.fill();
+        }
+
+        enemies.forEach(e => {
+            ctx.fillStyle = e.color;
+            ctx.beginPath();
+            ctx.moveTo(e.x + e.width, e.y);
+            ctx.lineTo(e.x, e.y + e.height / 2);
+            ctx.lineTo(e.x + e.width, e.y + e.height);
+            ctx.fill();
+        });
+
+        particles.forEach(p => {
+            ctx.globalAlpha = p.life;
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            ctx.fill();
+        });
+        ctx.globalAlpha = 1.0;
+
+        update();
+        requestAnimationFrame(draw);
+    }
+
+    updateLivesDisplay();
+    createEnemy();
+    draw();
+</script>
+</body>
+</html>

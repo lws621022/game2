@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emoji 槍戰生存遊戲</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            cursor: crosshair;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            pointer-events: none;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        #game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 2rem;
+            border-radius: 1rem;
+            text-align: center;
+            color: white;
+            display: none;
+            border: 2px solid #ef4444;
+            z-index: 10;
+        }
+        .btn {
+            background: #ef4444;
+            color: white;
+            padding: 0.5rem 1.5rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            pointer-events: auto;
+            margin-top: 1rem;
+            transition: background 0.2s;
+        }
+        .btn:hover {
+            background: #dc2626;
+        }
+        .ult-hint {
+            color: #60a5fa;
+            font-weight: bold;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div class="text-2xl font-bold">分數: <span id="score-val">0</span></div>
+        <div class="text-xl">生命值: <span id="hp-val">100</span>%</div>
+        <div class="mt-1 text-sm">
+            大招能量: 
+            <div class="w-32 h-3 bg-gray-700 rounded-full inline-block align-middle overflow-hidden border border-gray-600">
+                <div id="ult-bar" class="h-full bg-blue-500 w-0 transition-all"></div>
+            </div>
+            <span id="ult-ready" class="ult-hint hidden ml-2">READY (空白鍵)!</span>
+        </div>
+        <div class="mt-2 text-xs opacity-70">控制：方向鍵/WASD 移動 | 滑鼠左鍵射擊 | 空白鍵大招</div>
+    </div>
+
+    <div id="game-over">
+        <h1 class="text-4xl font-bold mb-4">遊戲結束!</h1>
+        <p class="text-xl mb-2">最終分數: <span id="final-score">0</span></p>
+        <button class="btn" onclick="resetGame()">重新開始</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score-val');
+        const hpEl = document.getElementById('hp-val');
+        const ultBarEl = document.getElementById('ult-bar');
+        const ultReadyEl = document.getElementById('ult-ready');
+        const gameOverEl = document.getElementById('game-over');
+        const finalScoreEl = document.getElementById('final-score');
+
+        // 遊戲狀態
+        let score = 0;
+        let gameActive = true;
+        let lastTime = 0;
+        let ultCharge = 0; // 大招能量 0 - 100
+        let ultEffectTimer = 0; // 大招特效時間
+
+        // 玩家設定
+        const player = {
+            x: 0,
+            y: 0,
+            size: 40,
+            speed: 300,
+            hp: 100,
+            maxHp: 100,
+            emoji: '🤠',
+            angle: 0
+        };
+
+        // 容器
+        let bullets = [];
+        let enemies = [];
+        const keys = {};
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            if (!player.x) {
+                player.x = canvas.width / 2;
+                player.y = canvas.height / 2;
+            }
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        window.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+            if (e.code === 'Space' && gameActive) {
+                useUltimate();
+            }
+        });
+        window.addEventListener('keyup', (e) => keys[e.code] = false);
+        window.addEventListener('mousedown', (e) => {
+            if (e.button === 0 && gameActive) shoot();
+        });
+        
+        let mouseX = 0, mouseY = 0;
+        window.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+            if (gameActive) {
+                player.angle = Math.atan2(mouseY - player.y, mouseX - player.x);
+            }
+        });
+
+        function shoot() {
+            const angle = Math.atan2(mouseY - player.y, mouseX - player.x);
+            bullets.push({
+                x: player.x,
+                y: player.y,
+                vx: Math.cos(angle) * 700,
+                vy: Math.sin(angle) * 700,
+                size: 20,
+                emoji: '💥'
+            });
+        }
+
+        function useUltimate() {
+            if (ultCharge < 100) return;
+
+            // 扣除能量
+            ultCharge = 0;
+            updateUltUI();
+
+            // 殺死所有畫面上的敵人
+            enemies.forEach(en => {
+                score += 10;
+            });
+            enemies = [];
+            scoreEl.innerText = score;
+
+            // 啟動特效
+            ultEffectTimer = 0.5; // 0.5秒特效
+        }
+
+        function updateUltUI() {
+            ultBarEl.style.width = ultCharge + '%';
+            if (ultCharge >= 100) {
+                ultReadyEl.classList.remove('hidden');
+                ultBarEl.classList.add('bg-blue-400');
+            } else {
+                ultReadyEl.classList.add('hidden');
+                ultBarEl.classList.remove('bg-blue-400');
+            }
+        }
+
+        function spawnEnemy() {
+            if (!gameActive) return;
+            
+            let x, y;
+            if (Math.random() < 0.5) {
+                x = Math.random() < 0.5 ? -50 : canvas.width + 50;
+                y = Math.random() * canvas.height;
+            } else {
+                x = Math.random() * canvas.width;
+                y = Math.random() < 0.5 ? -50 : canvas.height + 50;
+            }
+
+            const types = [
+                { emoji: '🧟', speed: 80, hp: 2, maxHp: 2 },
+                { emoji: '👻', speed: 130, hp: 1, maxHp: 1 },
+                { emoji: '👽', speed: 100, hp: 4, maxHp: 4 }
+            ];
+            const type = types[Math.floor(Math.random() * types.length)];
+
+            enemies.push({
+                x, y,
+                ...type,
+                size: 40
+            });
+
+            setTimeout(spawnEnemy, Math.max(400, 1800 - score * 5));
+        }
+
+        function resetGame() {
+            score = 0;
+            player.hp = 100;
+            ultCharge = 0;
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            bullets = [];
+            enemies = [];
+            gameActive = true;
+            scoreEl.innerText = '0';
+            hpEl.innerText = '100';
+            updateUltUI();
+            gameOverEl.style.display = 'none';
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function update(dt) {
+            if (!gameActive) return;
+
+            if (ultEffectTimer > 0) {
+                ultEffectTimer -= dt;
+            }
+
+            // 移動玩家
+            if (keys['ArrowUp'] || keys['KeyW']) player.y -= player.speed * dt;
+            if (keys['ArrowDown'] || keys['KeyS']) player.y += player.speed * dt;
+            if (keys['ArrowLeft'] || keys['KeyA']) player.x -= player.speed * dt;
+            if (keys['ArrowRight'] || keys['KeyD']) player.x += player.speed * dt;
+
+            player.x = Math.max(20, Math.min(canvas.width - 20, player.x));
+            player.y = Math.max(20, Math.min(canvas.height - 20, player.y));
+
+            // 更新子彈
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                b.x += b.vx * dt;
+                b.y += b.vy * dt;
+                if (b.x < -50 || b.x > canvas.width + 50 || b.y < -50 || b.y > canvas.height + 50) {
+                    bullets.splice(i, 1);
+                }
+            }
+
+            // 更新敵人
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const en = enemies[i];
+                const angle = Math.atan2(player.y - en.y, player.x - en.x);
+                en.x += Math.cos(angle) * en.speed * dt;
+                en.y += Math.sin(angle) * en.speed * dt;
+
+                // 檢查子彈碰撞
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    const b = bullets[j];
+                    const dist = Math.hypot(en.x - b.x, en.y - b.y);
+                    if (dist < 30) {
+                        en.hp--;
+                        bullets.splice(j, 1);
+                        if (en.hp <= 0) {
+                            enemies.splice(i, 1);
+                            score += 10;
+                            scoreEl.innerText = score;
+                            // 增加大招能量
+                            ultCharge = Math.min(100, ultCharge + 10);
+                            updateUltUI();
+                            break; 
+                        }
+                    }
+                }
+
+                if (en.hp <= 0) continue;
+
+                // 檢查與玩家碰撞
+                const distToPlayer = Math.hypot(en.x - player.x, en.y - player.y);
+                if (distToPlayer < 35) {
+                    player.hp -= 20 * dt; 
+                    hpEl.innerText = Math.max(0, Math.ceil(player.hp));
+                    if (player.hp <= 0) endGame();
+                }
+            }
+        }
+
+        function drawHealthBar(x, y, current, max, width = 40, height = 5) {
+            const barY = y - 35;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(x - width/2, barY, width, height);
+            const healthWidth = Math.max(0, (current / max) * width);
+            ctx.fillStyle = current / max > 0.3 ? '#22c55e' : '#ef4444';
+            ctx.fillRect(x - width/2, barY, healthWidth, height);
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 繪製背景網格
+            ctx.fillStyle = '#222';
+            for(let i=0; i<canvas.width; i+=100) {
+                for(let j=0; j<canvas.height; j+=100) {
+                    ctx.fillRect(i, j, 2, 2);
+                }
+            }
+
+            // 繪製大招特效
+            if (ultEffectTimer > 0) {
+                ctx.fillStyle = `rgba(96, 165, 250, ${ultEffectTimer * 2})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, (0.5 - ultEffectTimer) * 2000, 0, Math.PI * 2);
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 10;
+                ctx.stroke();
+            }
+
+            // 繪製子彈
+            ctx.font = '20px serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            bullets.forEach(b => {
+                ctx.fillText(b.emoji, b.x, b.y);
+            });
+
+            // 繪製敵人
+            enemies.forEach(en => {
+                ctx.font = '40px serif';
+                ctx.fillText(en.emoji, en.x, en.y);
+                drawHealthBar(en.x, en.y, en.hp, en.maxHp, 36, 4);
+            });
+
+            // 繪製玩家
+            ctx.save();
+            ctx.translate(player.x, player.y);
+            ctx.rotate(player.angle + Math.PI / 2);
+            ctx.font = '45px serif';
+            ctx.fillText(player.emoji, 0, 0);
+            ctx.restore();
+            
+            drawHealthBar(player.x, player.y, player.hp, player.maxHp, 50, 6);
+        }
+
+        function endGame() {
+            gameActive = false;
+            finalScoreEl.innerText = score;
+            gameOverEl.style.display = 'block';
+        }
+
+        function gameLoop(timestamp) {
+            if (!lastTime) lastTime = timestamp;
+            const dt = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+
+            update(dt);
+            draw();
+
+            if (gameActive) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        spawnEnemy();
+        requestAnimationFrame(gameLoop);
+
+    </script>
+</body>
+</html>

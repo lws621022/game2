@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>元素合成進化論</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0f172a;
+            font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+            touch-action: none;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+            border-left: 4px solid #334155;
+            border-right: 4px solid #334155;
+            border-bottom: 4px solid #334155;
+        }
+        .ui-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            pointer-events: none;
+        }
+        #next-preview {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(30, 41, 59, 0.8);
+            padding: 15px;
+            border-radius: 15px;
+            border: 2px solid #475569;
+            text-align: center;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+
+        <div class="ui-panel">
+            <h1 class="text-xl font-bold text-blue-400">分數: <span id="score">0</span></h1>
+            <p class="text-sm text-slate-400">點擊上方投下元素</p>
+        </div>
+
+        <div id="next-preview">
+            <p class="text-xs text-slate-400 mb-2">下一個</p>
+            <canvas id="nextCanvas" width="60" height="60"></canvas>
+        </div>
+
+        <!-- 遊戲結束畫面 -->
+        <div id="gameOver" class="absolute inset-0 bg-slate-900/80 flex items-center justify-center hidden z-50">
+            <div class="bg-white p-8 rounded-2xl text-center max-w-sm w-full mx-4">
+                <h2 class="text-3xl font-bold text-slate-800 mb-2">超越極限！</h2>
+                <p class="text-slate-600 mb-6">你的最終分數：<span id="finalScore" class="font-bold text-blue-600">0</span></p>
+                <button onclick="resetGame()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition">
+                    重新進化
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /** @type {HTMLCanvasElement} */
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const nextCanvas = document.getElementById('nextCanvas');
+        const nextCtx = nextCanvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const gameOverEl = document.getElementById('gameOver');
+        const finalScoreEl = document.getElementById('finalScore');
+
+        // 元素定義：等級、名稱、顏色、半徑、分數
+        const ELEMENTS = [
+            { level: 0, name: "氫", color: "#60a5fa", radius: 15, score: 2 },
+            { level: 1, name: "氦", color: "#34d399", radius: 25, score: 4 },
+            { level: 2, name: "鋰", color: "#fbbf24", radius: 35, score: 8 },
+            { level: 3, name: "鈹", color: "#f87171", radius: 45, score: 16 },
+            { level: 4, name: "硼", color: "#818cf8", radius: 55, score: 32 },
+            { level: 5, name: "碳", color: "#a78bfa", radius: 70, score: 64 },
+            { level: 6, name: "氮", color: "#fb7185", radius: 85, score: 128 },
+            { level: 7, name: "氧", color: "#2dd4bf", radius: 105, score: 256 },
+            { level: 8, name: "氟", color: "#f472b6", radius: 125, score: 512 },
+            { level: 9, name: "氖", color: "#fb923c", radius: 145, score: 1024 }
+        ];
+
+        let objects = [];
+        let score = 0;
+        let nextIndex = 0;
+        let isGameOver = false;
+        let canDrop = true;
+        const GRAVITY = 0.5;
+        const FRICTION = 0.98;
+        const WALL_BOUNCE = 0.5;
+
+        function init() {
+            canvas.width = Math.min(window.innerWidth, 450);
+            canvas.height = window.innerHeight;
+            nextIndex = Math.floor(Math.random() * 3);
+            updateNextPreview();
+            animate();
+        }
+
+        function updateNextPreview() {
+            nextCtx.clearRect(0, 0, 60, 60);
+            const info = ELEMENTS[nextIndex];
+            nextCtx.fillStyle = info.color;
+            nextCtx.beginPath();
+            nextCtx.arc(30, 30, 12, 0, Math.PI * 2);
+            nextCtx.fill();
+        }
+
+        class Element {
+            constructor(x, y, index, isStatic = false) {
+                this.x = x;
+                this.y = y;
+                this.index = index;
+                this.info = ELEMENTS[index];
+                this.radius = this.info.radius;
+                this.vx = 0;
+                this.vy = 0;
+                this.isStatic = isStatic;
+                this.merged = false;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                
+                // 漸層外觀
+                const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.radius);
+                grad.addColorStop(0, this.info.color);
+                grad.addColorStop(1, 'black');
+                ctx.fillStyle = grad;
+                ctx.fill();
+
+                // 文字標籤
+                ctx.fillStyle = "white";
+                ctx.font = `bold ${Math.max(10, this.radius / 2)}px Arial`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(this.info.name, this.x, this.y);
+                ctx.restore();
+            }
+
+            update() {
+                if (this.isStatic) return;
+
+                this.vy += GRAVITY;
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // 地板碰撞
+                if (this.y + this.radius > canvas.height) {
+                    this.y = canvas.height - this.radius;
+                    this.vy *= -0.3;
+                    this.vx *= FRICTION;
+                }
+
+                // 牆壁碰撞
+                if (this.x - this.radius < 0) {
+                    this.x = this.radius;
+                    this.vx *= -WALL_BOUNCE;
+                } else if (this.x + this.radius > canvas.width) {
+                    this.x = canvas.width - this.radius;
+                    this.vx *= -WALL_BOUNCE;
+                }
+            }
+        }
+
+        function checkCollisions() {
+            for (let i = 0; i < objects.length; i++) {
+                for (let j = i + 1; j < objects.length; j++) {
+                    const o1 = objects[i];
+                    const o2 = objects[j];
+                    if (o1.merged || o2.merged) continue;
+
+                    const dx = o2.x - o1.x;
+                    const dy = o2.y - o1.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    const minDistance = o1.radius + o2.radius;
+
+                    if (distance < minDistance) {
+                        // 如果等級相同則合成
+                        if (o1.index === o2.index && o1.index < ELEMENTS.length - 1) {
+                            o1.merged = true;
+                            o2.merged = true;
+                            const newX = (o1.x + o2.x) / 2;
+                            const newY = (o1.y + o2.y) / 2;
+                            const nextIdx = o1.index + 1;
+                            
+                            score += ELEMENTS[nextIdx].score;
+                            scoreEl.innerText = score;
+
+                            setTimeout(() => {
+                                objects.push(new Element(newX, newY, nextIdx));
+                                objects = objects.filter(o => !o.merged);
+                            }, 0);
+                            return;
+                        }
+
+                        // 彈性碰撞物理
+                        const angle = Math.atan2(dy, dx);
+                        const overlap = minDistance - distance;
+                        
+                        // 分離物體
+                        const moveX = Math.cos(angle) * overlap / 2;
+                        const moveY = Math.sin(angle) * overlap / 2;
+                        o1.x -= moveX;
+                        o1.y -= moveY;
+                        o2.x += moveX;
+                        o2.y += moveY;
+
+                        // 簡單速度交換
+                        const normalX = dx / distance;
+                        const normalY = dy / distance;
+                        const relativeVelocityX = o1.vx - o2.vx;
+                        const relativeVelocityY = o1.vy - o2.vy;
+                        const p = (relativeVelocityX * normalX + relativeVelocityY * normalY);
+                        
+                        o1.vx -= p * normalX * 0.5;
+                        o1.vy -= p * normalY * 0.5;
+                        o2.vx += p * normalX * 0.5;
+                        o2.vy += p * normalY * 0.5;
+                    }
+                }
+            }
+        }
+
+        function checkGameOver() {
+            // 如果有物體在螢幕上方靜止太久
+            objects.forEach(o => {
+                if (o.y < 80 && Math.abs(o.vy) < 0.1 && !o.isStatic) {
+                    isGameOver = true;
+                    finalScoreEl.innerText = score;
+                    gameOverEl.classList.remove('hidden');
+                }
+            });
+        }
+
+        function animate() {
+            if (isGameOver) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 繪製死亡線
+            ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(0, 80);
+            ctx.lineTo(canvas.width, 80);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            checkCollisions();
+            objects.forEach(o => {
+                o.update();
+                o.draw();
+            });
+
+            checkGameOver();
+            requestAnimationFrame(animate);
+        }
+
+        canvas.addEventListener('click', (e) => {
+            if (!canDrop || isGameOver) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            
+            // 生成新元素
+            const newEl = new Element(x, 40, nextIndex);
+            objects.push(newEl);
+            
+            // 隨機下一個 (僅限前三種基礎元素)
+            nextIndex = Math.floor(Math.random() * 3);
+            updateNextPreview();
+            
+            // 冷卻時間
+            canDrop = false;
+            setTimeout(() => canDrop = true, 500);
+        });
+
+        function resetGame() {
+            objects = [];
+            score = 0;
+            scoreEl.innerText = "0";
+            isGameOver = false;
+            gameOverEl.classList.add('hidden');
+            init();
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>

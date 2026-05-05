@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Emoji 跑酷大冒險 - 音效增強版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #f0f9ff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background: linear-gradient(to bottom, #87CEEB 0%, #E0F7FA 70%, #4ade80 70%, #166534 100%);
+            overflow: hidden;
+        }
+        #player {
+            position: absolute;
+            font-size: 50px;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            width: 60px;
+            height: 60px;
+        }
+        .obstacle {
+            position: absolute;
+            font-size: 40px;
+            z-index: 5;
+            user-select: none;
+        }
+        .coin {
+            position: absolute;
+            font-size: 30px;
+            z-index: 6;
+            animation: bounce 0.5s infinite alternate;
+            user-select: none;
+        }
+        @keyframes bounce {
+            from { transform: translateY(0); }
+            to { transform: translateY(-10px); }
+        }
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 20;
+            pointer-events: none;
+        }
+        .heart {
+            font-size: 24px;
+            transition: opacity 0.3s;
+        }
+        #game-over {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border-radius: 20px;
+            text-align: center;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            z-index: 100;
+        }
+        .invincible {
+            animation: flash 0.1s infinite alternate;
+        }
+        @keyframes flash {
+            from { opacity: 0.3; }
+            to { opacity: 1; }
+        }
+        /* 提示音效需要使用者點擊 */
+        #start-prompt {
+            position: absolute;
+            inset: 0;
+            background: rgba(0,0,0,0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 200;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <!-- 啟動提示 (瀏覽器政策要求點擊後才能播放音效) -->
+    <div id="start-prompt">
+        <button onclick="startGame()" class="bg-yellow-400 hover:bg-yellow-500 text-yellow-900 px-10 py-5 rounded-2xl font-bold text-2xl shadow-2xl transform transition hover:scale-110 active:scale-95">
+            點擊開始遊戲 (開啟音效)
+        </button>
+    </div>
+
+    <!-- UI 資訊 -->
+    <div id="ui-layer">
+        <div class="bg-white/80 p-4 rounded-xl shadow-lg border-2 border-blue-200">
+            <div id="hearts-container" class="flex gap-1 mb-2">
+                <span class="heart">❤️</span>
+                <span class="heart">❤️</span>
+                <span class="heart">❤️</span>
+            </div>
+            <p class="text-xl font-bold text-blue-800">分數: <span id="score">0</span></p>
+            <p class="text-sm text-gray-600">最高紀錄: <span id="high-score">0</span></p>
+        </div>
+    </div>
+
+    <!-- 遊戲角色 -->
+    <div id="player">🏃</div>
+
+    <!-- 遊戲結束畫面 -->
+    <div id="game-over">
+        <h2 class="text-3xl font-bold text-red-600 mb-2">挑戰結束！</h2>
+        <p class="text-lg mb-4">你的分數是：<span id="final-score">0</span></p>
+        <button onclick="resetGame()" class="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-full font-bold transition-all transform hover:scale-105 active:scale-95 shadow-lg">
+            再試一次
+        </button>
+    </div>
+</div>
+
+<script>
+    // --- 音效引擎 (Web Audio API) ---
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    function playSound(type) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        const now = audioCtx.currentTime;
+
+        if (type === 'coin') {
+            // 清脆的金幣聲
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(600, now);
+            osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+            osc.start(now);
+            osc.stop(now + 0.2);
+        } else if (type === 'hit') {
+            // 沉重的碰撞聲
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(150, now);
+            osc.frequency.linearRampToValueAtTime(50, now + 0.2);
+            gain.gain.setValueAtTime(0.3, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
+            osc.start(now);
+            osc.stop(now + 0.3);
+        } else if (type === 'jump') {
+            // 跳躍聲
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(200, now);
+            osc.frequency.exponentialRampToValueAtTime(500, now + 0.15);
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+            osc.start(now);
+            osc.stop(now + 0.15);
+        }
+    }
+
+    const player = document.getElementById('player');
+    const gameContainer = document.getElementById('game-container');
+    const scoreElement = document.getElementById('score');
+    const highScoreElement = document.getElementById('high-score');
+    const gameOverScreen = document.getElementById('game-over');
+    const finalScoreElement = document.getElementById('final-score');
+    const heartsContainer = document.getElementById('hearts-container');
+    const startPrompt = document.getElementById('start-prompt');
+
+    // 遊戲常數
+    const GROUND_Y = window.innerHeight * 0.7 - 60;
+    const GRAVITY = 0.8;
+    const JUMP_FORCE = -15;
+
+    // 遊戲狀態
+    let gameState = {
+        active: false,
+        x: 100,
+        y: GROUND_Y,
+        vy: 0,
+        jumpCount: 0,
+        maxJumps: 2,
+        lives: 3,
+        score: 0,
+        highScore: parseInt(localStorage.getItem('highScore') || 0),
+        isGameOver: false,
+        isInvincible: false,
+        speed: 6,
+        obstacles: [],
+        coins: [],
+        keys: {}
+    };
+
+    highScoreElement.innerText = gameState.highScore;
+
+    window.addEventListener('keydown', (e) => {
+        if (gameState.isGameOver || !gameState.active) return;
+        
+        if ((e.key === 'ArrowUp' || e.key === ' ') && gameState.jumpCount < gameState.maxJumps) {
+            gameState.vy = JUMP_FORCE;
+            gameState.jumpCount++;
+            player.innerText = '🚀';
+            playSound('jump');
+        }
+        gameState.keys[e.key] = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+        gameState.keys[e.key] = false;
+    });
+
+    function updateHearts() {
+        const hearts = heartsContainer.querySelectorAll('.heart');
+        hearts.forEach((heart, index) => {
+            heart.style.opacity = index < gameState.lives ? '1' : '0.2';
+        });
+    }
+
+    function createObstacle() {
+        if (gameState.isGameOver || !gameState.active) return;
+        const obs = document.createElement('div');
+        obs.className = 'obstacle';
+        obs.innerText = Math.random() > 0.5 ? '🌵' : '🔥';
+        obs.style.left = window.innerWidth + 'px';
+        obs.style.top = GROUND_Y + 10 + 'px';
+        gameContainer.appendChild(obs);
+        gameState.obstacles.push(obs);
+        
+        setTimeout(createObstacle, 1500 - Math.min(gameState.score * 5, 800));
+    }
+
+    function createCoin() {
+        if (gameState.isGameOver || !gameState.active) return;
+        const coin = document.createElement('div');
+        coin.className = 'coin';
+        coin.innerText = '💰';
+        coin.style.left = window.innerWidth + 'px';
+        const coinY = Math.random() > 0.5 ? GROUND_Y - 100 : GROUND_Y - 20;
+        coin.style.top = coinY + 'px';
+        gameContainer.appendChild(coin);
+        gameState.coins.push(coin);
+        
+        setTimeout(createCoin, 2000 + Math.random() * 2000);
+    }
+
+    function checkCollision(rect1, rect2) {
+        const padding = 15;
+        return !(rect1.right - padding < rect2.left + padding || 
+                 rect1.left + padding > rect2.right - padding || 
+                 rect1.bottom - padding < rect2.top + padding || 
+                 rect1.top + padding > rect2.bottom - padding);
+    }
+
+    function handleHit() {
+        if (gameState.isInvincible || gameState.isGameOver) return;
+        
+        gameState.lives--;
+        updateHearts();
+        playSound('hit');
+        
+        if (gameState.lives <= 0) {
+            endGame();
+        } else {
+            gameState.isInvincible = true;
+            player.classList.add('invincible');
+            player.innerText = '🤕';
+            
+            setTimeout(() => {
+                gameState.isInvincible = false;
+                player.classList.remove('invincible');
+                player.innerText = '🏃';
+            }, 1500);
+        }
+    }
+
+    function gameLoop() {
+        if (gameState.isGameOver || !gameState.active) return;
+
+        const horizontalSpeed = 7;
+        if (gameState.keys['ArrowLeft'] && gameState.x > 0) gameState.x -= horizontalSpeed;
+        if (gameState.keys['ArrowRight'] && gameState.x < window.innerWidth - 60) gameState.x += horizontalSpeed;
+
+        gameState.vy += GRAVITY;
+        gameState.y += gameState.vy;
+
+        if (gameState.y >= GROUND_Y) {
+            gameState.y = GROUND_Y;
+            gameState.vy = 0;
+            gameState.jumpCount = 0;
+            if (!gameState.isInvincible) player.innerText = '🏃';
+        }
+
+        player.style.left = gameState.x + 'px';
+        player.style.top = gameState.y + 'px';
+
+        const playerRect = player.getBoundingClientRect();
+
+        gameState.obstacles.forEach((obs, index) => {
+            const currentLeft = parseFloat(obs.style.left);
+            obs.style.left = (currentLeft - gameState.speed) + 'px';
+
+            if (checkCollision(playerRect, obs.getBoundingClientRect())) {
+                handleHit();
+            }
+
+            if (currentLeft < -50) {
+                obs.remove();
+                gameState.obstacles.splice(index, 1);
+                gameState.score += 1;
+                scoreElement.innerText = gameState.score;
+                if (gameState.score % 15 === 0) gameState.speed += 0.5;
+            }
+        });
+
+        gameState.coins.forEach((coin, index) => {
+            const currentLeft = parseFloat(coin.style.left);
+            coin.style.left = (currentLeft - gameState.speed) + 'px';
+
+            if (checkCollision(playerRect, coin.getBoundingClientRect())) {
+                coin.remove();
+                gameState.coins.splice(index, 1);
+                gameState.score += 10;
+                scoreElement.innerText = gameState.score;
+                playSound('coin');
+            }
+
+            if (currentLeft < -50) {
+                coin.remove();
+                gameState.coins.splice(index, 1);
+            }
+        });
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    function startGame() {
+        startPrompt.style.display = 'none';
+        gameState.active = true;
+        audioCtx.resume();
+        updateHearts();
+        createObstacle();
+        createCoin();
+        gameLoop();
+    }
+
+    function endGame() {
+        gameState.isGameOver = true;
+        if (gameState.score > gameState.highScore) {
+            gameState.highScore = gameState.score;
+            localStorage.setItem('highScore', gameState.score);
+        }
+        finalScoreElement.innerText = gameState.score;
+        gameOverScreen.style.display = 'block';
+        player.innerText = '👻';
+    }
+
+    function resetGame() {
+        gameState.obstacles.forEach(o => o.remove());
+        gameState.coins.forEach(c => c.remove());
+        
+        gameState = {
+            ...gameState,
+            x: 100,
+            y: GROUND_Y,
+            vy: 0,
+            jumpCount: 0,
+            lives: 3,
+            score: 0,
+            isGameOver: false,
+            isInvincible: false,
+            speed: 6,
+            obstacles: [],
+            coins: [],
+            keys: {}
+        };
+        
+        updateHearts();
+        player.innerText = '🏃';
+        player.classList.remove('invincible');
+        scoreElement.innerText = '0';
+        highScoreElement.innerText = gameState.highScore;
+        gameOverScreen.style.display = 'none';
+        
+        requestAnimationFrame(gameLoop);
+    }
+
+    // 初始化角色位置
+    player.style.left = gameState.x + 'px';
+    player.style.top = gameState.y + 'px';
+</script>
+
+</body>
+</html>

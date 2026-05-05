@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>迷你玩樂園</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #bce881; /* 卡通草地綠色 */
+            touch-action: none; /* 防止手機滑動網頁 */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #gameCanvas {
+            display: block;
+        }
+
+        /* 遊戲 UI 介面 */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* 讓點擊穿透到 canvas 或控制按鈕 */
+        }
+
+        .hud-box {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 12px;
+            padding: 8px 16px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            font-weight: bold;
+            color: #333;
+            pointer-events: auto;
+            border: 2px solid #e5e7eb;
+        }
+
+        /* 通知訊息 */
+        #notification {
+            position: absolute;
+            top: 20%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 1.2rem;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            z-index: 50;
+        }
+
+        /* 手機控制面板 */
+        #mobile-controls {
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            width: 100%;
+            height: 150px;
+            pointer-events: none;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 20px;
+            box-sizing: border-box;
+            z-index: 40;
+        }
+
+        .control-area {
+            pointer-events: auto;
+        }
+
+        /* 虛擬搖桿底座 */
+        #joystick-base {
+            width: 120px;
+            height: 120px;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            position: relative;
+            border: 2px solid rgba(255,255,255,0.5);
+        }
+
+        /* 虛擬搖桿頭 */
+        #joystick-stick {
+            width: 50px;
+            height: 50px;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            position: absolute;
+            top: 35px;
+            left: 35px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        /* 動作按鈕 */
+        #action-btn {
+            width: 80px;
+            height: 80px;
+            background: #3b82f6;
+            color: white;
+            border-radius: 50%;
+            border: 4px solid #93c5fd;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            font-weight: bold;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            user-select: none;
+            margin-top: 20px;
+            margin-right: 10px;
+            transition: transform 0.1s, background 0.1s;
+        }
+
+        #action-btn:active {
+            transform: scale(0.9);
+            background: #2563eb;
+        }
+
+        #action-btn.highlight {
+            background: #f59e0b;
+            border-color: #fcd34d;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(245, 158, 11, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+        }
+
+        /* 電腦版隱藏虛擬搖桿 (透過 JS 判斷) */
+        @media (min-width: 768px) {
+            #mobile-controls {
+                opacity: 0.7; /* 電腦版仍保留按鈕供滑鼠點擊，但降低透明度 */
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 遊戲畫布 -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- UI 覆蓋層 -->
+    <div id="ui-layer">
+        <!-- 左上角：狀態列 -->
+        <div class="absolute top-4 left-4 flex gap-3">
+            <div class="hud-box flex items-center gap-2">
+                <span class="text-xl">🪙</span>
+                <span id="coin-count" class="text-lg font-mono">0</span>
+            </div>
+            <div class="hud-box flex items-center gap-2">
+                <span class="text-xl">🐟</span>
+                <span id="fish-count" class="text-lg font-mono">0</span>
+                <button id="sell-fish-btn" class="ml-2 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 px-3 py-1 rounded-full text-sm shadow-sm active:scale-95 transition-transform cursor-pointer pointer-events-auto">賣出</button>
+            </div>
+        </div>
+
+        <!-- 右上角：提示 -->
+        <div class="absolute top-4 right-4 hud-box text-sm text-gray-500">
+            <span class="hidden md:inline">WASD移動 | J拋竿 | K釣起</span>
+            <span class="md:hidden">使用搖桿移動 | 按鈕互動</span>
+        </div>
+
+        <!-- 畫面中央：通知 -->
+        <div id="notification">釣到魚了！</div>
+    </div>
+
+    <!-- 底部控制區 -->
+    <div id="mobile-controls">
+        <div class="control-area">
+            <div id="joystick-base">
+                <div id="joystick-stick"></div>
+            </div>
+        </div>
+        <div class="control-area">
+            <div id="action-btn">互動</div>
+        </div>
+    </div>
+
+<script>
+/**
+ * 遊戲主要邏輯
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// UI 元素
+const coinCountEl = document.getElementById('coin-count');
+const fishCountEl = document.getElementById('fish-count');
+const sellFishBtn = document.getElementById('sell-fish-btn');
+const notificationEl = document.getElementById('notification');
+const actionBtn = document.getElementById('action-btn');
+const joystickBase = document.getElementById('joystick-base');
+const joystickStick = document.getElementById('joystick-stick');
+
+let floatingTexts = []; // 用來儲存釣到魚浮起來的動畫物件
+
+// 遊戲世界設定
+const WORLD_WIDTH = 2000;
+const WORLD_HEIGHT = 2000;
+let camera = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
+
+// 角色設定
+const player = {
+    x: WORLD_WIDTH / 2,
+    y: WORLD_HEIGHT / 2,
+    size: 40,
+    speed: 5,
+    vx: 0,
+    vy: 0,
+    emoji: '🐱',
+    state: 'IDLE', // IDLE, FISHING_WAIT, FISHING_BITE
+    fishTimer: 0,
+    inventory: {
+        coins: 0,
+        fish: [] // 改為陣列，用來儲存釣到的各種魚類
+    }
+};
+
+// 輸入狀態
+const keys = { w: false, a: false, s: false, d: false, j: false, k: false };
+const joystick = { active: false, dx: 0, dy: 0, touchId: null };
+
+// 遊戲地圖物件
+const objects = {
+    pond: { x: 1200, y: 300, width: 600, height: 400, color: '#3b82f6', type: 'water' },
+    roads: [
+        { x: 0, y: WORLD_HEIGHT/2 - 100, width: WORLD_WIDTH, height: 200, color: '#64748b' }, // 橫向道路
+        { x: WORLD_WIDTH/2 - 100, y: 0, width: 200, height: WORLD_HEIGHT, color: '#64748b' }  // 直向道路
+    ],
+    buildings: [],
+    trees: [],
+    coins: []
+};
+
+// 產生隨機建築、樹木和金幣
+function initWorld() {
+    const buildingEmojis = ['🏠', '🏡', '🏪', '🏫', '🏦', '🏥'];
+    const treeEmojis = ['🌳', '🌲'];
+
+    for (let i = 0; i < 80; i++) {
+        let tx = Math.random() * WORLD_WIDTH;
+        let ty = Math.random() * WORLD_HEIGHT;
+        
+        // 避開池塘和馬路
+        const inPond = (tx > 1100 && tx < 1900 && ty > 200 && ty < 800);
+        const onRoad = (ty > WORLD_HEIGHT/2 - 150 && ty < WORLD_HEIGHT/2 + 150) || 
+                       (tx > WORLD_WIDTH/2 - 150 && tx < WORLD_WIDTH/2 + 150);
+        
+        if (inPond || onRoad) {
+            continue;
+        }
+
+        // 隨機決定是建築物還是樹木
+        if (Math.random() > 0.4) {
+            objects.buildings.push({ x: tx, y: ty, size: 80, emoji: buildingEmojis[Math.floor(Math.random()*buildingEmojis.length)] });
+        } else {
+            objects.trees.push({ x: tx, y: ty, size: 60, emoji: treeEmojis[Math.floor(Math.random()*treeEmojis.length)] });
+        }
+    }
+
+    // 產生金幣
+    spawnCoins(20);
+}
+
+function spawnCoins(amount) {
+    for (let i = 0; i < amount; i++) {
+        objects.coins.push({
+            x: 100 + Math.random() * (WORLD_WIDTH - 200),
+            y: 100 + Math.random() * (WORLD_HEIGHT - 200),
+            size: 20,
+            active: true
+        });
+    }
+}
+
+// 調整畫布大小
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    camera.width = canvas.width;
+    camera.height = canvas.height;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// 顯示通知訊息
+let notifTimeout;
+function showNotification(text, duration = 2000) {
+    notificationEl.textContent = text;
+    notificationEl.style.opacity = '1';
+    clearTimeout(notifTimeout);
+    notifTimeout = setTimeout(() => {
+        notificationEl.style.opacity = '0';
+    }, duration);
+}
+
+// --- 輸入處理 ---
+
+// 鍵盤
+window.addEventListener('keydown', (e) => {
+    // 使用 e.code 來判斷實體按鍵，這樣可以不受大小寫或中文輸入法的影響
+    if(e.code === 'KeyW' || e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') keys.w = true;
+    if(e.code === 'KeyA' || e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.a = true;
+    if(e.code === 'KeyS' || e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') keys.s = true;
+    if(e.code === 'KeyD' || e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.d = true;
+    
+    if((e.code === 'KeyJ' || e.key === 'j' || e.key === 'J') && !keys.j) {
+        keys.j = true;
+        handleCast();
+    }
+    if((e.code === 'KeyK' || e.key === 'k' || e.key === 'K') && !keys.k) {
+        keys.k = true;
+        handleReel();
+    }
+});
+
+window.addEventListener('keyup', (e) => {
+    if(e.code === 'KeyW' || e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') keys.w = false;
+    if(e.code === 'KeyA' || e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.a = false;
+    if(e.code === 'KeyS' || e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') keys.s = false;
+    if(e.code === 'KeyD' || e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.d = false;
+    
+    if(e.code === 'KeyJ' || e.key === 'j' || e.key === 'J') keys.j = false;
+    if(e.code === 'KeyK' || e.key === 'k' || e.key === 'K') keys.k = false;
+});
+
+// 虛擬搖桿 (觸控)
+joystickBase.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const touch = e.changedTouches[0];
+    joystick.active = true;
+    joystick.touchId = touch.identifier;
+    updateJoystick(touch);
+});
+
+joystickBase.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        if (e.changedTouches[i].identifier === joystick.touchId) {
+            updateJoystick(e.changedTouches[i]);
+            break;
+        }
+    }
+});
+
+function handleJoystickEnd(e) {
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        if (e.changedTouches[i].identifier === joystick.touchId) {
+            joystick.active = false;
+            joystick.touchId = null;
+            joystick.dx = 0;
+            joystick.dy = 0;
+            joystickStick.style.transform = `translate(0px, 0px)`;
+            break;
+        }
+    }
+}
+joystickBase.addEventListener('touchend', handleJoystickEnd);
+joystickBase.addEventListener('touchcancel', handleJoystickEnd);
+
+function updateJoystick(touch) {
+    const rect = joystickBase.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    
+    let dx = touch.clientX - centerX;
+    let dy = touch.clientY - centerY;
+    
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const maxRadius = rect.width / 2 - 25; // 搖桿頭半徑
+    
+    if (distance > maxRadius) {
+        dx = (dx / distance) * maxRadius;
+        dy = (dy / distance) * maxRadius;
+    }
+    
+    joystickStick.style.transform = `translate(${dx}px, ${dy}px)`;
+    
+    // 標準化為 -1 到 1
+    joystick.dx = dx / maxRadius;
+    joystick.dy = dy / maxRadius;
+}
+
+// 動作按鈕
+actionBtn.addEventListener('mousedown', (e) => { e.preventDefault(); handleMobileAction(); });
+actionBtn.addEventListener('touchstart', (e) => { e.preventDefault(); handleMobileAction(); });
+
+// 賣魚按鈕 (換金幣)
+sellFishBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (player.inventory.fish.length > 0) {
+        // 計算背包裡所有魚的總價值
+        const earnedCoins = player.inventory.fish.reduce((sum, f) => sum + f.price, 0);
+        
+        player.inventory.coins += earnedCoins;
+        player.inventory.fish = []; // 清空背包
+        
+        coinCountEl.innerText = player.inventory.coins;
+        fishCountEl.innerText = player.inventory.fish.length;
+        
+        showNotification(`大豐收！賣出獲得 ${earnedCoins} 金幣！`);
+    } else {
+        showNotification("你還沒有釣到魚喔！");
+    }
+});
+// 防止手機點擊時觸發其他事件
+sellFishBtn.addEventListener('touchstart', (e) => { e.stopPropagation(); });
+
+// --- 遊戲互動邏輯 ---
+
+// 檢查是否在池塘邊 (可以釣魚的範圍)
+function isNearPond() {
+    const p = objects.pond;
+    // 判斷玩家是否在池塘邊緣一定範圍內
+    const nearX = player.x > p.x - 50 && player.x < p.x + p.width + 50;
+    const nearY = player.y > p.y - 50 && player.y < p.y + p.height + 50;
+    const inside = player.x > p.x && player.x < p.x + p.width && player.y > p.y && player.y < p.y + p.height;
+    
+    return nearX && nearY && !inside; // 在邊緣但不在水裡
+}
+
+// 供手機虛擬按鈕使用的整合邏輯
+function handleMobileAction() {
+    if (player.state === 'IDLE') {
+        handleCast();
+    } else {
+        handleReel();
+    }
+}
+
+// 拋竿邏輯 (對應 J 鍵)
+function handleCast() {
+    if (player.state === 'IDLE' && isNearPond()) {
+        startFishing();
+    }
+}
+
+// 釣起邏輯 (對應 K 鍵)
+function handleReel() {
+    if (player.state === 'FISHING_WAIT') {
+        // 太早拉竿
+        player.state = 'IDLE';
+        showNotification("太早拉竿了，魚被嚇跑了！");
+        actionBtn.classList.remove('highlight');
+        actionBtn.innerText = '拋竿(J)';
+    } else if (player.state === 'FISHING_BITE') {
+        // 成功釣到魚
+        player.state = 'IDLE';
+        
+        // 根據機率決定釣到的魚種與價格
+        const rand = Math.random();
+        let caughtFish;
+        if (rand < 0.5) {
+            caughtFish = { emoji: '🐟', name: '普通魚', price: 10 };
+        } else if (rand < 0.8) {
+            caughtFish = { emoji: '🐠', name: '熱帶魚', price: 30 };
+        } else if (rand < 0.95) {
+            caughtFish = { emoji: '🐡', name: '河豚', price: 80 };
+        } else {
+            caughtFish = { emoji: '🦑', name: '大王烏賊', price: 200 };
+        }
+        
+        player.inventory.fish.push(caughtFish); // 放進背包
+        fishCountEl.innerText = player.inventory.fish.length; // 更新左上角數量
+        
+        showNotification(`🎣 釣到了 ${caughtFish.name}！(價值 ${caughtFish.price}🪙)`);
+        
+        // 加入魚浮動的動畫效果
+        floatingTexts.push({ x: player.x, y: player.y - 30, text: caughtFish.emoji, life: 60, maxLife: 60 });
+        
+        actionBtn.classList.remove('highlight');
+        actionBtn.innerText = '拋竿(J)';
+    }
+}
+
+function startFishing() {
+    player.state = 'FISHING_WAIT';
+    player.vx = 0;
+    player.vy = 0;
+    actionBtn.innerText = '釣起(K)';
+    
+    // 設定魚咬餌的時間 (2 ~ 5秒)
+    const waitTime = 2000 + Math.random() * 3000;
+    
+    setTimeout(() => {
+        if (player.state === 'FISHING_WAIT') {
+            player.state = 'FISHING_BITE';
+            actionBtn.classList.add('highlight');
+            actionBtn.innerText = '快拉(K)!';
+            
+            // 給予 1.5 秒的反應時間
+            setTimeout(() => {
+                if (player.state === 'FISHING_BITE') {
+                    player.state = 'IDLE';
+                    showNotification("魚跑掉了...");
+                    actionBtn.classList.remove('highlight');
+                    actionBtn.innerText = '拋竿(J)';
+                }
+            }, 1500);
+        }
+    }, waitTime);
+}
+
+
+// --- 更新與繪製迴圈 ---
+
+function update() {
+    // 只有在 IDLE 狀態才能移動
+    if (player.state === 'IDLE') {
+        // 取得輸入向量
+        let vx = 0;
+        let vy = 0;
+
+        if (joystick.active) {
+            vx = joystick.dx;
+            vy = joystick.dy;
+        } else {
+            if (keys.a) vx -= 1;
+            if (keys.d) vx += 1;
+            if (keys.w) vy -= 1;
+            if (keys.s) vy += 1;
+        }
+
+        // 正規化對角線速度
+        const length = Math.sqrt(vx * vx + vy * vy);
+        if (length > 0) {
+            vx = (vx / length) * player.speed;
+            vy = (vy / length) * player.speed;
+        }
+
+        player.x += vx;
+        player.y += vy;
+
+        // 邊界限制
+        player.x = Math.max(player.size/2, Math.min(WORLD_WIDTH - player.size/2, player.x));
+        player.y = Math.max(player.size/2, Math.min(WORLD_HEIGHT - player.size/2, player.y));
+
+        // 簡單的水域碰撞阻擋 (不讓玩家走進池塘)
+        const p = objects.pond;
+        if (player.x + player.size/2 > p.x && player.x - player.size/2 < p.x + p.width &&
+            player.y + player.size/2 > p.y && player.y - player.size/2 < p.y + p.height) {
+            // 退回一步 (簡單處理)
+            player.x -= vx;
+            player.y -= vy;
+        }
+    }
+
+    // 更新攝影機位置 (跟隨玩家，置中)
+    camera.x = player.x - camera.width / 2;
+    camera.y = player.y - camera.height / 2;
+
+    // 限制攝影機在世界範圍內
+    camera.x = Math.max(0, Math.min(camera.x, WORLD_WIDTH - camera.width));
+    camera.y = Math.max(0, Math.min(camera.y, WORLD_HEIGHT - camera.height));
+
+        // 收集金幣邏輯
+        for (let i = objects.coins.length - 1; i >= 0; i--) {
+            const coin = objects.coins[i];
+            if (coin.active) {
+                const dx = player.x - coin.x;
+                const dy = player.y - coin.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                
+                if (dist < player.size/2 + coin.size) {
+                    coin.active = false;
+                    player.inventory.coins++;
+                    coinCountEl.innerText = player.inventory.coins;
+                    
+                    // 每收集一定數量，補充新的
+                    if (objects.coins.filter(c => c.active).length < 5) {
+                        spawnCoins(10);
+                    }
+                }
+            }
+        }
+
+        // 更新互動按鈕 UI 狀態
+        if (player.state === 'IDLE') {
+            if (isNearPond()) {
+                actionBtn.innerText = '拋竿(J)';
+                actionBtn.style.background = '#10b981'; // 變成綠色提示可互動
+            } else {
+                actionBtn.innerText = '互動';
+                actionBtn.style.background = '#3b82f6';
+            }
+        }
+        
+        // 浮動動畫更新 (釣到的魚)
+        for (let i = floatingTexts.length - 1; i >= 0; i--) {
+            floatingTexts[i].y -= 1.5; // 向上浮動
+            floatingTexts[i].life -= 1;
+            if (floatingTexts[i].life <= 0) {
+                floatingTexts.splice(i, 1);
+            }
+        }
+    }
+
+function draw() {
+    // 清除畫面
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 儲存 Context，套用攝影機偏移
+    ctx.save();
+    ctx.translate(-camera.x, -camera.y);
+
+    // 1. 畫背景裝飾 (動漫/卡通風格的雙色網格草地)
+    const tileSize = 80;
+    for (let x = 0; x < WORLD_WIDTH; x += tileSize) {
+        for (let y = 0; y < WORLD_HEIGHT; y += tileSize) {
+            if ((x / tileSize + y / tileSize) % 2 === 0) {
+                ctx.fillStyle = '#bce881'; // 亮色系卡通草地
+            } else {
+                ctx.fillStyle = '#addb72'; // 暗色系卡通草地
+            }
+            ctx.fillRect(x, y, tileSize, tileSize);
+            
+            // 畫一些簡單的卡通草叢紋理
+            if ((x / tileSize * 7 + y / tileSize * 3) % 5 === 0) {
+                ctx.fillStyle = '#90c454';
+                ctx.beginPath();
+                ctx.roundRect(x + 10, y + 10, 6, 12, 3);
+                ctx.roundRect(x + 18, y + 14, 6, 8, 3);
+                ctx.fill();
+            }
+        }
+    }
+
+    // 2. 畫小鎮道路 (加上卡通風格路緣)
+    objects.roads.forEach(road => {
+        // 馬路外框/人行道 (卡通風格)
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(road.x - 8, road.y - 8, road.width + 16, road.height + 16);
+        
+        // 馬路底色
+        ctx.fillStyle = road.color; // 原本的 #64748b
+        ctx.fillRect(road.x, road.y, road.width, road.height);
+        
+        // 畫馬路中心虛線
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 6;
+        ctx.setLineDash([30, 30]);
+        ctx.beginPath();
+        if (road.width > road.height) { // 橫向道路
+            ctx.moveTo(road.x, road.y + road.height/2);
+            ctx.lineTo(road.x + road.width, road.y + road.height/2);
+        } else { // 直向道路
+            ctx.moveTo(road.x + road.width/2, road.y);
+            ctx.lineTo(road.x + road.width/2, road.y + road.height);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]); // 恢復實線
+    });
+
+    // 3. 畫池塘 (加上卡通風格沙灘)
+    const p = objects.pond;
+    
+    ctx.fillStyle = '#fef08a'; // 卡通沙灘色
+    ctx.beginPath();
+    ctx.roundRect(p.x - 15, p.y - 15, p.width + 30, p.height + 30, 40);
+    ctx.fill();
+
+    ctx.fillStyle = p.color;
+    // 畫圓角矩形池塘
+    ctx.beginPath();
+    ctx.roundRect(p.x, p.y, p.width, p.height, 30);
+    ctx.fill();
+    
+    // 池塘水波紋裝飾
+    ctx.strokeStyle = '#93c5fd';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(p.x + 100, p.y + 100, 30, 0, Math.PI);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(p.x + 400, p.y + 250, 40, 0, Math.PI);
+    ctx.stroke();
+
+    // 池塘邊緣提示 (如果靠近)
+    if (isNearPond() && player.state === 'IDLE') {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.lineWidth = 4;
+        ctx.setLineDash([10, 10]);
+        ctx.beginPath();
+        ctx.roundRect(p.x - 25, p.y - 25, p.width + 50, p.height + 50, 45);
+        ctx.stroke();
+        ctx.setLineDash([]); // 恢復實線
+    }
+
+    // 4. 畫金幣
+    ctx.font = '24px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    objects.coins.forEach(coin => {
+        if (coin.active) {
+            // 讓金幣有上下浮動的動畫效果
+            const floatY = Math.sin(Date.now() / 200 + coin.x) * 5;
+            ctx.fillText('🪙', coin.x, coin.y + floatY);
+        }
+    });
+
+    // 5. 畫樹木與建築物 (加上立體卡通陰影)
+    ctx.font = '60px Arial';
+    objects.trees.forEach(tree => {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+        ctx.beginPath();
+        ctx.ellipse(tree.x, tree.y + 15, 25, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillText(tree.emoji, tree.x, tree.y);
+    });
+    
+    ctx.font = '80px Arial';
+    objects.buildings.forEach(building => {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+        ctx.beginPath();
+        ctx.ellipse(building.x, building.y + 25, 45, 15, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillText(building.emoji, building.x, building.y);
+    });
+
+    // 6. 畫玩家
+    ctx.font = '40px Arial';
+    
+    // 玩家陰影
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.beginPath();
+    ctx.ellipse(player.x, player.y + 20, 20, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 玩家本體 (根據移動稍微搖擺)
+    let playerTilt = 0;
+    if (player.state === 'IDLE' && (keys.w || keys.a || keys.s || keys.d || joystick.active)) {
+        playerTilt = Math.sin(Date.now() / 100) * 0.2;
+    }
+    
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    ctx.rotate(playerTilt);
+    ctx.fillText(player.emoji, 0, 0);
+    ctx.restore();
+
+    // 玩家狀態氣泡 (釣魚)
+    if (player.state === 'FISHING_WAIT') {
+        ctx.fillText('🎣', player.x + 30, player.y - 30);
+        ctx.font = '20px Arial';
+        ctx.fillText('...', player.x, player.y - 40);
+    } else if (player.state === 'FISHING_BITE') {
+        ctx.font = '40px Arial';
+        ctx.fillText('❗️', player.x, player.y - 40);
+        
+        // 震動效果
+        player.x += (Math.random() - 0.5) * 4;
+    }
+
+    // 7. 畫浮動文字 (釣到的魚動畫顯示)
+    floatingTexts.forEach(ft => {
+        const alpha = ft.life / ft.maxLife;
+        ctx.globalAlpha = alpha;
+        ctx.font = '50px Arial';
+        ctx.fillText(ft.text, ft.x, ft.y);
+        ctx.globalAlpha = 1.0; // 恢復透明度
+    });
+
+    ctx.restore(); // 恢復攝影機視角
+}
+
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+// 初始化並啟動
+initWorld();
+showNotification("歡迎來到迷你玩樂園！", 3000);
+gameLoop();
+
+</script>
+</body>
+</html>

@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Rogue Shooter - 技能進化射擊</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #020617;
+            color: #f8fafc;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            user-select: none;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            background: radial-gradient(circle at center, #0f172a 0%, #020617 100%);
+        }
+        .overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(2, 6, 23, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            backdrop-filter: blur(8px);
+        }
+        .upgrade-card {
+            background: rgba(30, 41, 59, 0.7);
+            border: 2px solid #38bdf8;
+            padding: 20px;
+            border-radius: 16px;
+            width: 250px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        .upgrade-card:hover {
+            background: #38bdf8;
+            color: #020617;
+            transform: translateY(-10px);
+            box-shadow: 0 0 30px rgba(56, 189, 248, 0.5);
+        }
+        .hud {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            padding: 0 20px;
+            pointer-events: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            z-index: 50;
+        }
+        .hp-bar {
+            width: 200px;
+            height: 12px;
+            background: #1e293b;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid #334155;
+        }
+        #hp-fill {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, #f43f5e, #fb7185);
+            transition: width 0.3s;
+        }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div class="hud">
+    <div>
+        <div class="text-[10px] uppercase tracking-widest text-sky-400">機體耐久度</div>
+        <div class="hp-bar mt-1"><div id="hp-fill"></div></div>
+        <div id="scoreText" class="text-2xl font-black mt-2">SCORE: 0</div>
+    </div>
+    <div class="text-right">
+        <div class="text-[10px] uppercase tracking-widest text-purple-400">波次</div>
+        <div id="waveText" class="text-2xl font-black">WAVE 1</div>
+    </div>
+</div>
+
+<div id="startScreen" class="overlay">
+    <h1 class="text-6xl font-black mb-4 italic tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-purple-500">NEON STRIKE</h1>
+    <p class="text-slate-400 mb-12">滑鼠移動機體 • 自動射擊 • 進化火力</p>
+    <button onclick="startGame()" class="bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold py-4 px-12 rounded-full text-xl transition-all shadow-lg shadow-sky-500/20">發動引擎</button>
+</div>
+
+<div id="upgradeScreen" class="overlay hidden">
+    <h2 class="text-3xl font-black mb-8 text-sky-400 tracking-widest">選擇升級模組</h2>
+    <div id="upgradeContainer" class="flex gap-6">
+        <!-- 升級卡片會在此動態生成 -->
+    </div>
+</div>
+
+<div id="gameOverScreen" class="overlay hidden">
+    <h2 class="text-5xl font-black text-rose-500 mb-4">任務失敗</h2>
+    <p id="finalScore" class="text-slate-400 mb-12 text-xl"></p>
+    <button onclick="location.reload()" class="bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-10 rounded-full transition-all">重新啟動</button>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const hpFill = document.getElementById('hp-fill');
+    const scoreText = document.getElementById('scoreText');
+    const waveText = document.getElementById('waveText');
+    
+    // 遊戲狀態
+    let gameState = 'MENU';
+    let score = 0;
+    let wave = 1;
+    let frame = 0;
+    let mouse = { x: 0, y: 0 };
+
+    // 玩家屬性
+    const player = {
+        x: 0, y: 0, size: 20,
+        hp: 100, maxHp: 100,
+        fireRate: 15, // 多少 frame 射一發
+        bulletSpeed: 7,
+        bulletCount: 1, // 散射數量
+        bulletPower: 1,
+        pierce: 0, // 穿透力
+        shield: 0
+    };
+
+    let bullets = [];
+    let enemies = [];
+    let particles = [];
+    let powerUps = [];
+
+    // 升級池
+    const UPGRADES = [
+        { id: 'multishot', name: '三連發射', desc: '增加子彈散射數量', apply: () => player.bulletCount++ },
+        { id: 'firerate', name: '超頻射擊', desc: '射擊速度提升 25%', apply: () => player.fireRate = Math.max(5, player.fireRate * 0.75) },
+        { id: 'speed', name: '高能彈體', desc: '子彈飛行速度大幅提升', apply: () => player.bulletSpeed += 3 },
+        { id: 'power', name: '重型彈藥', desc: '單發傷害大幅提升', apply: () => player.bulletPower += 1 },
+        { id: 'repair', name: '緊急修復', desc: '回復 50% 耐久度', apply: () => player.hp = Math.min(player.maxHp, player.hp + player.maxHp * 0.5) },
+        { id: 'pierce', name: '穿透射線', desc: '子彈可以穿透敵機', apply: () => player.pierce++ }
+    ];
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        player.x = canvas.width / 2;
+        player.y = canvas.height - 100;
+    }
+    window.addEventListener('resize', resize);
+    window.addEventListener('mousemove', e => {
+        mouse.x = e.clientX;
+        mouse.y = e.clientY;
+    });
+    resize();
+
+    function startGame() {
+        gameState = 'PLAYING';
+        document.getElementById('startScreen').classList.add('hidden');
+    }
+
+    function spawnEnemy() {
+        const type = Math.random() > 0.8 ? 'HARD' : 'NORMAL';
+        enemies.push({
+            x: Math.random() * (canvas.width - 40) + 20,
+            y: -50,
+            hp: type === 'HARD' ? 3 + Math.floor(wave/2) : 1,
+            maxHp: type === 'HARD' ? 3 + Math.floor(wave/2) : 1,
+            size: type === 'HARD' ? 30 : 20,
+            speed: type === 'HARD' ? 1.5 : 2.5,
+            color: type === 'HARD' ? '#a855f7' : '#38bdf8'
+        });
+    }
+
+    function createExplosion(x, y, color) {
+        for(let i=0; i<10; i++) {
+            particles.push({
+                x, y, color,
+                vx: (Math.random()-0.5)*10,
+                vy: (Math.random()-0.5)*10,
+                life: 1.0
+            });
+        }
+    }
+
+    function showUpgradeUI() {
+        gameState = 'UPGRADE';
+        const container = document.getElementById('upgradeContainer');
+        container.innerHTML = '';
+        
+        // 隨機選3個升級
+        const shuffled = [...UPGRADES].sort(() => 0.5 - Math.random()).slice(0, 3);
+        
+        shuffled.forEach(upg => {
+            const card = document.createElement('div');
+            card.className = 'upgrade-card';
+            card.innerHTML = `
+                <h3 class="text-xl font-bold mb-2">${upg.name}</h3>
+                <p class="text-sm opacity-80">${upg.desc}</p>
+            `;
+            card.onclick = () => {
+                upg.apply();
+                gameState = 'PLAYING';
+                document.getElementById('upgradeScreen').classList.add('hidden');
+                wave++;
+                waveText.innerText = `WAVE ${wave}`;
+            };
+            container.appendChild(card);
+        });
+        
+        document.getElementById('upgradeScreen').classList.remove('hidden');
+    }
+
+    function update() {
+        if (gameState !== 'PLAYING') return;
+        frame++;
+
+        // 玩家移動 (平滑跟隨)
+        player.x += (mouse.x - player.x) * 0.15;
+        player.y += (mouse.y - player.y) * 0.15;
+
+        // 自動射擊
+        if (frame % Math.floor(player.fireRate) === 0) {
+            const spread = 0.2;
+            const startAngle = -((player.bulletCount - 1) * spread) / 2;
+            for(let i=0; i<player.bulletCount; i++) {
+                const angle = startAngle + i * spread;
+                bullets.push({
+                    x: player.x,
+                    y: player.y - 20,
+                    vx: Math.sin(angle) * player.bulletSpeed,
+                    vy: -Math.cos(angle) * player.bulletSpeed,
+                    power: player.bulletPower,
+                    pierce: player.pierce
+                });
+            }
+        }
+
+        // 子彈更新
+        bullets.forEach((b, bi) => {
+            b.x += b.vx;
+            b.y += b.vy;
+            if (b.y < -50) bullets.splice(bi, 1);
+        });
+
+        // 敵機更新
+        if (frame % Math.max(10, 60 - wave * 2) === 0) spawnEnemy();
+        
+        enemies.forEach((e, ei) => {
+            e.y += e.speed;
+            
+            // 撞擊玩家
+            const dx = e.x - player.x;
+            const dy = e.y - player.y;
+            if (Math.sqrt(dx*dx + dy*dy) < e.size + player.size) {
+                player.hp -= 20;
+                enemies.splice(ei, 1);
+                createExplosion(e.x, e.y, e.color);
+                hpFill.style.width = Math.max(0, player.hp) + "%";
+                if (player.hp <= 0) endGame();
+            }
+
+            // 與子彈碰撞
+            bullets.forEach((b, bi) => {
+                const bdx = b.x - e.x;
+                const bdy = b.y - e.y;
+                if (Math.sqrt(bdx*bdx + bdy*bdy) < e.size + 5) {
+                    e.hp -= b.power;
+                    if (b.pierce <= 0) bullets.splice(bi, 1);
+                    else b.pierce--;
+
+                    if (e.hp <= 0) {
+                        score += (e.size > 25 ? 50 : 10);
+                        scoreText.innerText = `SCORE: ${score}`;
+                        createExplosion(e.x, e.y, e.color);
+                        enemies.splice(ei, 1);
+                        
+                        // 檢查波次升級 (每擊敗20個敵人)
+                        if (score > 0 && score % 300 === 0) {
+                            showUpgradeUI();
+                        }
+                    }
+                }
+            });
+
+            if (e.y > canvas.height + 50) enemies.splice(ei, 1);
+        });
+
+        // 粒子更新
+        particles.forEach((p, pi) => {
+            p.x += p.vx; p.y += p.vy;
+            p.life -= 0.03;
+            if (p.life <= 0) particles.splice(pi, 1);
+        });
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 背景粒子 (星空)
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        for(let i=0; i<20; i++) {
+            ctx.fillRect((frame * 2 + i * 100) % canvas.width, (frame * 5 + i * 200) % canvas.height, 2, 2);
+        }
+
+        // 畫玩家
+        ctx.save();
+        ctx.translate(player.x, player.y);
+        ctx.fillStyle = '#fff';
+        ctx.shadowBlur = 15; ctx.shadowColor = '#38bdf8';
+        ctx.beginPath();
+        ctx.moveTo(0, -25); ctx.lineTo(-20, 15); ctx.lineTo(20, 15);
+        ctx.closePath();
+        ctx.fill();
+        // 引擎噴火
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillRect(-5, 15, 10, 10 + Math.random()*10);
+        ctx.restore();
+
+        // 畫子彈
+        bullets.forEach(b => {
+            ctx.fillStyle = '#f8fafc';
+            ctx.shadowBlur = 10; ctx.shadowColor = '#38bdf8';
+            ctx.fillRect(b.x-2, b.y-10, 4, 15);
+        });
+
+        // 畫敵機
+        enemies.forEach(e => {
+            ctx.fillStyle = e.color;
+            ctx.shadowBlur = 15; ctx.shadowColor = e.color;
+            ctx.beginPath();
+            ctx.arc(e.x, e.y, e.size, 0, Math.PI * 2);
+            ctx.fill();
+            // 血條
+            if (e.maxHp > 1) {
+                ctx.fillStyle = '#000';
+                ctx.fillRect(e.x - 15, e.y - 40, 30, 4);
+                ctx.fillStyle = '#f43f5e';
+                ctx.fillRect(e.x - 15, e.y - 40, (e.hp / e.maxHp) * 30, 4);
+            }
+        });
+
+        // 畫粒子
+        particles.forEach(p => {
+            ctx.globalAlpha = p.life;
+            ctx.fillStyle = p.color;
+            ctx.fillRect(p.x, p.y, 3, 3);
+        });
+        ctx.globalAlpha = 1.0;
+    }
+
+    function endGame() {
+        gameState = 'GAMEOVER';
+        document.getElementById('gameOverScreen').classList.remove('hidden');
+        document.getElementById('finalScore').innerText = `最終波次: ${wave} • 總得分: ${score}`;
+    }
+
+    function loop() {
+        update();
+        draw();
+        requestAnimationFrame(loop);
+    }
+    loop();
+</script>
+</body>
+</html>

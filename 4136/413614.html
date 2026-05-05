@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>冒險小英雄 - 大草原奔跑挑戰</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            color: white;
+            font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+        }
+        canvas {
+            display: block;
+            /* 天空漸層 */
+            background: linear-gradient(to bottom, #4facfe 0%, #00f2fe 100%);
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+        }
+        .ui-overlay {
+            pointer-events: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .stats {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        .heart {
+            color: #ff4757;
+            text-shadow: 0 0 10px rgba(255, 71, 87, 0.5);
+            font-size: 24px;
+        }
+        .game-msg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 40px;
+            border-radius: 30px;
+            border: 4px solid #2ecc71;
+            backdrop-filter: blur(10px);
+            pointer-events: auto;
+            color: #2c3e50;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen">
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div class="ui-overlay">
+        <!-- 頂部資訊 -->
+        <div class="stats">
+            <div class="bg-white/80 backdrop-blur p-4 rounded-2xl border border-green-500/20 shadow-lg">
+                <div class="text-xs uppercase tracking-widest text-green-600 font-bold mb-1">Score 分數</div>
+                <div class="text-3xl font-black text-slate-800" id="scoreValue">0000</div>
+            </div>
+            <div class="flex gap-2 bg-white/80 backdrop-blur p-4 rounded-2xl border border-green-500/20 shadow-lg" id="livesContainer">
+                <!-- 生命心心會在這裡 -->
+            </div>
+        </div>
+
+        <!-- 底部提示 -->
+        <div class="flex justify-center pb-4">
+            <div class="bg-black/20 backdrop-blur-sm px-6 py-2 rounded-full text-sm text-white border border-white/20">
+                方向鍵移動 • <span class="text-yellow-300 font-bold">連按兩下空白鍵</span> 可二段跳
+            </div>
+        </div>
+    </div>
+
+    <!-- 遊戲結束/開始畫面 -->
+    <div id="statusModal" class="game-msg hidden shadow-2xl">
+        <h2 id="modalTitle" class="text-5xl font-black mb-4 text-green-600">READY?</h2>
+        <p id="modalDesc" class="text-slate-600 mb-8 leading-relaxed text-lg font-medium">在遼闊的大草原上盡情奔跑吧！<br>避開土堆障礙，收集金色能量球。<br>現在可以連按兩下跳得更高囉！</p>
+        <button id="actionBtn" class="px-12 py-4 bg-green-500 hover:bg-green-600 text-white font-black text-xl rounded-2xl transition-all transform active:scale-95 shadow-lg shadow-green-700/40">
+            開始挑戰
+        </button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('scoreValue');
+        const livesContainer = document.getElementById('livesContainer');
+        const statusModal = document.getElementById('statusModal');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalDesc = document.getElementById('modalDesc');
+        const actionBtn = document.getElementById('actionBtn');
+
+        let gameState = 'START';
+        let score = 0;
+        let lives = 3;
+        let animationId;
+        let obstacleCooldown = 0;
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // 玩家物件 (小男孩)
+        const player = {
+            x: 100,
+            y: 0,
+            width: 40,
+            height: 50,
+            color: '#3498db',
+            skinColor: '#ffdbac',
+            hairColor: '#5d4037',
+            velocityX: 0,
+            velocityY: 0,
+            speed: 6,
+            jumpForce: 13.5, // 稍微調低初始跳躍力以適應二段跳
+            gravity: 0.7, // 稍微降低重力讓操作感更輕盈
+            isJumping: false,
+            canDoubleJump: false, // 是否可以二段跳
+            groundY: 0,
+            draw() {
+                ctx.save();
+                ctx.translate(this.x + this.width/2, this.y + this.height/2);
+                
+                let scaleY = 1;
+                // 跳躍時的拉伸效果
+                if (this.isJumping) {
+                    scaleY = this.velocityY < 0 ? 1.15 : 0.9;
+                }
+                ctx.scale(1, scaleY);
+
+                // 1. 身體 (藍色上衣)
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.roundRect(-this.width/2 + 5, -5, this.width - 10, 25, 5);
+                ctx.fill();
+
+                // 2. 頭部
+                ctx.fillStyle = this.skinColor;
+                ctx.beginPath();
+                ctx.roundRect(-this.width/2 + 4, -this.height/2 + 5, this.width - 8, 22, 10);
+                ctx.fill();
+
+                // 3. 頭髮
+                ctx.fillStyle = this.hairColor;
+                ctx.beginPath();
+                ctx.roundRect(-this.width/2 + 4, -this.height/2 + 5, this.width - 8, 8, {tl: 10, tr: 10, bl: 0, br: 0});
+                ctx.fill();
+                ctx.fillRect(-this.width/2 + 4, -this.height/2 + 10, 10, 5);
+
+                // 4. 眼睛
+                ctx.fillStyle = '#333';
+                ctx.beginPath();
+                ctx.arc(-7, -this.height/2 + 18, 2.5, 0, Math.PI * 2);
+                ctx.arc(7, -this.height/2 + 18, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 5. 腳
+                ctx.fillStyle = '#222';
+                ctx.fillRect(-this.width/2 + 8, 20, 12, 6);
+                ctx.fillRect(this.width/2 - 20, 20, 12, 6);
+                
+                ctx.restore();
+            },
+            update() {
+                this.groundY = canvas.height - 100 - this.height;
+
+                if (keys['ArrowLeft']) this.velocityX = -this.speed;
+                else if (keys['ArrowRight']) this.velocityX = this.speed;
+                else this.velocityX *= 0.8;
+
+                if (keys['ArrowUp']) this.y -= this.speed / 1.5;
+                if (keys['ArrowDown']) this.y += this.speed / 1.5;
+
+                // 角色邏輯更新
+                this.x += this.velocityX;
+                this.y += this.velocityY;
+                this.velocityY += this.gravity;
+
+                // 邊界檢查
+                if (this.x < 0) this.x = 0;
+                if (this.x + this.width > canvas.width) this.x = canvas.width - this.width;
+                if (this.y < 0) this.y = 0;
+
+                // 落地檢查
+                if (this.y >= this.groundY) {
+                    this.y = this.groundY;
+                    this.velocityY = 0;
+                    this.isJumping = false;
+                    this.canDoubleJump = false;
+                }
+            },
+            jump() {
+                if (!this.isJumping) {
+                    // 第一段跳
+                    this.velocityY = -this.jumpForce;
+                    this.isJumping = true;
+                    this.canDoubleJump = true;
+                } else if (this.canDoubleJump) {
+                    // 二段跳
+                    this.velocityY = -this.jumpForce * 0.9;
+                    this.canDoubleJump = false;
+                }
+            }
+        };
+
+        let obstacles = [];
+        let coins = [];
+
+        class Obstacle {
+            constructor() {
+                this.height = 25 + Math.random() * 20; 
+                this.width = 40 + Math.random() * 40;
+                this.x = canvas.width + 100;
+                this.y = canvas.height - 100 - this.height;
+                this.speed = 5 + (score / 1000);
+            }
+            draw() {
+                ctx.fillStyle = '#5d4037';
+                ctx.beginPath();
+                ctx.roundRect(this.x, this.y, this.width, this.height, 4);
+                ctx.fill();
+
+                ctx.fillStyle = '#2ecc71';
+                ctx.beginPath();
+                ctx.roundRect(this.x, this.y, this.width, this.height * 0.4, {tl: 4, tr: 4, bl: 0, br: 0});
+                ctx.fill();
+
+                ctx.fillStyle = '#27ae60';
+                for(let i = 0; i < this.width; i += 15) {
+                    ctx.fillRect(this.x + i + 5, this.y + 2, 4, 4);
+                }
+
+                ctx.fillStyle = 'rgba(0,0,0,0.1)';
+                ctx.fillRect(this.x, this.y + this.height - 5, this.width, 5);
+            }
+            update() {
+                this.x -= this.speed;
+            }
+        }
+
+        class Coin {
+            constructor() {
+                this.radius = 12;
+                this.x = canvas.width + 50;
+                this.y = canvas.height - 200 - Math.random() * 200;
+                this.speed = 4;
+            }
+            draw() {
+                ctx.fillStyle = '#f1c40f';
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#f1c40f';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(this.x - 3, this.y - 3, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+            update() {
+                this.x -= this.speed;
+            }
+        }
+
+        const keys = {};
+        window.addEventListener('keydown', e => {
+            if (e.key === ' ' && !keys[' ']) {
+                player.jump(); // 使用新的跳躍方法
+            }
+            keys[e.key] = true;
+        });
+        window.addEventListener('keyup', e => keys[e.key] = false);
+
+        function updateLivesUI() {
+            livesContainer.innerHTML = '';
+            for(let i=0; i<3; i++) {
+                const heart = document.createElement('span');
+                heart.className = 'heart';
+                heart.innerText = i < lives ? '❤️' : '🖤';
+                livesContainer.appendChild(heart);
+            }
+        }
+
+        function spawnElements() {
+            if (gameState !== 'PLAYING') return;
+
+            if (obstacleCooldown > 0) {
+                obstacleCooldown--;
+            }
+
+            if (Math.random() < 0.012 && obstacleCooldown <= 0) {
+                obstacles.push(new Obstacle());
+                obstacleCooldown = 100; 
+            }
+
+            if (Math.random() < 0.008) {
+                coins.push(new Coin());
+            }
+        }
+
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 繪製草原地板
+            ctx.fillStyle = '#27ae60'; 
+            ctx.fillRect(0, canvas.height - 100, canvas.width, 100);
+            
+            ctx.fillStyle = '#2ecc71';
+            ctx.fillRect(0, canvas.height - 100, canvas.width, 10);
+
+            if (gameState === 'PLAYING') {
+                player.update();
+                player.draw();
+
+                spawnElements();
+
+                for (let i = obstacles.length - 1; i >= 0; i--) {
+                    obstacles[i].update();
+                    obstacles[i].draw();
+
+                    if (
+                        player.x < obstacles[i].x + obstacles[i].width &&
+                        player.x + player.width > obstacles[i].x &&
+                        player.y < obstacles[i].y + obstacles[i].height &&
+                        player.y + player.height > obstacles[i].y
+                    ) {
+                        obstacles.splice(i, 1);
+                        lives--;
+                        updateLivesUI();
+                        if (lives <= 0) {
+                            endGame();
+                        }
+                        continue;
+                    }
+
+                    if (obstacles[i].x + obstacles[i].width < 0) {
+                        obstacles.splice(i, 1);
+                        score += 10;
+                    }
+                }
+
+                for (let i = coins.length - 1; i >= 0; i--) {
+                    coins[i].update();
+                    coins[i].draw();
+
+                    const dx = player.x + player.width/2 - coins[i].x;
+                    const dy = player.y + player.height/2 - coins[i].y;
+                    const distance = Math.sqrt(dx*dx + dy*dy);
+
+                    if (distance < player.width/2 + coins[i].radius) {
+                        coins.splice(i, 1);
+                        score += 50;
+                        continue;
+                    }
+
+                    if (coins[i].x + coins[i].radius < 0) {
+                        coins.splice(i, 1);
+                    }
+                }
+
+                scoreEl.innerText = score.toString().padStart(4, '0');
+            }
+
+            animationId = requestAnimationFrame(gameLoop);
+        }
+
+        function startGame() {
+            gameState = 'PLAYING';
+            score = 0;
+            lives = 3;
+            obstacles = [];
+            coins = [];
+            obstacleCooldown = 0;
+            updateLivesUI();
+            statusModal.classList.add('hidden');
+        }
+
+        function endGame() {
+            gameState = 'GAMEOVER';
+            modalTitle.innerText = "冒險結束";
+            modalTitle.className = "text-5xl font-black mb-4 text-red-500";
+            modalDesc.innerHTML = `二段跳救了你幾次呢？<br>最終得分：<span class="text-2xl text-slate-800 font-bold">${score}</span><br>要再挑戰一次嗎？`;
+            actionBtn.innerText = "再次挑戰";
+            statusModal.classList.remove('hidden');
+        }
+
+        actionBtn.addEventListener('click', startGame);
+
+        updateLivesUI();
+        statusModal.classList.remove('hidden');
+        gameLoop();
+
+    </script>
+</body>
+</html>

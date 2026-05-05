@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>冒險者物品合併 - 拖曳隨機版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --bg-color: #1a1a2e;
+            --grid-bg: #16213e;
+            --cell-bg: rgba(255, 255, 255, 0.03);
+        }
+
+        body {
+            background-color: var(--bg-color);
+            font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+            touch-action: none;
+            color: #e94560;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        .game-container {
+            max-width: 450px;
+            margin: 0 auto;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: repeat(4, 1fr);
+            gap: 12px;
+            background-color: var(--grid-bg);
+            padding: 12px;
+            border-radius: 16px;
+            aspect-ratio: 1 / 1;
+            position: relative;
+            border: 4px solid #0f3460;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        .cell {
+            background-color: var(--cell-bg);
+            border-radius: 12px;
+            position: relative;
+            border: 2px dashed rgba(255, 255, 255, 0.05);
+        }
+
+        .item {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: grab;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10;
+            user-select: none;
+            transition: transform 0.1s, opacity 0.2s;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .item.dragging {
+            z-index: 100;
+            cursor: grabbing;
+            transform: scale(1.1);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.4);
+            pointer-events: none;
+        }
+
+        .item-icon {
+            font-size: 2.5rem;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+        }
+
+        .item-name {
+            font-size: 0.6rem;
+            color: #94a3b8;
+            margin-top: 2px;
+            font-weight: bold;
+            pointer-events: none;
+        }
+
+        /* 物品等級背景色 */
+        .tier-1 { background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%); }
+        .tier-2 { border: 1px solid #2ecc71; background: radial-gradient(circle, rgba(46,204,113,0.15) 0%, transparent 70%); }
+        .tier-3 { border: 1px solid #3498db; background: radial-gradient(circle, rgba(52,152,219,0.15) 0%, transparent 70%); }
+        .tier-4 { border: 1px solid #9b59b6; background: radial-gradient(circle, rgba(155,89,182,0.15) 0%, transparent 70%); }
+        .tier-5 { border: 1px solid #f1c40f; background: radial-gradient(circle, rgba(241,196,15,0.15) 0%, transparent 70%); }
+        .tier-6 { border: 1px solid #e74c3c; background: radial-gradient(circle, rgba(231,76,60,0.2) 0%, transparent 70%); box-shadow: inset 0 0 15px rgba(231,76,60,0.2); }
+
+        .score-box {
+            background: #0f3460;
+            padding: 10px 20px;
+            border-radius: 12px;
+            color: #fff;
+            text-align: center;
+            border-bottom: 3px solid #e94560;
+        }
+
+        .merge-flash {
+            animation: flash 0.4s ease-out;
+        }
+
+        .new-spawn-effect {
+            animation: spawn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes flash {
+            0% { transform: scale(1); filter: brightness(1); }
+            50% { transform: scale(1.3); filter: brightness(2); }
+            100% { transform: scale(1); filter: brightness(1); }
+        }
+
+        @keyframes spawn {
+            0% { transform: scale(0); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        #drag-proxy {
+            position: fixed;
+            pointer-events: none;
+            z-index: 1000;
+            display: none;
+        }
+    </style>
+</head>
+<body class="p-4">
+
+    <div class="game-container w-full">
+        <!-- 頂部資訊 -->
+        <div class="flex justify-between items-center mb-6">
+            <div>
+                <h1 class="text-3xl font-bold text-white mb-1">物品進化 <span class="text-xs font-normal text-gray-400 block">試試你的運氣！</span></h1>
+            </div>
+            <div class="score-box">
+                <div class="text-[10px] text-gray-400 uppercase tracking-widest">聲望得分</div>
+                <div id="score" class="text-xl font-mono font-bold text-[#e94560]">0</div>
+            </div>
+        </div>
+
+        <!-- 遊戲網格 -->
+        <div id="grid" class="grid-container">
+            <!-- 16 個格子 -->
+            <div class="cell" data-index="0"></div>
+            <div class="cell" data-index="1"></div>
+            <div class="cell" data-index="2"></div>
+            <div class="cell" data-index="3"></div>
+            <div class="cell" data-index="4"></div>
+            <div class="cell" data-index="5"></div>
+            <div class="cell" data-index="6"></div>
+            <div class="cell" data-index="7"></div>
+            <div class="cell" data-index="8"></div>
+            <div class="cell" data-index="9"></div>
+            <div class="cell" data-index="10"></div>
+            <div class="cell" data-index="11"></div>
+            <div class="cell" data-index="12"></div>
+            <div class="cell" data-index="13"></div>
+            <div class="cell" data-index="14"></div>
+            <div class="cell" data-index="15"></div>
+        </div>
+
+        <!-- 產生按鈕 -->
+        <div class="mt-8 flex flex-col items-center gap-4">
+            <button id="spawn-btn" class="w-full bg-[#e94560] hover:bg-[#ff4d6d] text-white font-bold py-4 px-10 rounded-2xl transition-all shadow-lg active:scale-95">
+                抽取新物品 (消耗 5 點)
+            </button>
+            <div class="flex gap-4 text-[10px] text-gray-500">
+                <span>🥢 80%</span>
+                <span>🗡️ 15%</span>
+                <span>⚔️ 5%</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 拖曳代理物件 -->
+    <div id="drag-proxy" class="item"></div>
+
+    <script>
+        const ITEMS = [
+            { id: 1, name: "枯木枝", icon: "🥢", score: 10, tier: 1 },
+            { id: 2, name: "生鏽劍", icon: "🗡️", score: 25, tier: 1 },
+            { id: 3, name: "鐵長劍", icon: "⚔️", score: 60, tier: 2 },
+            { id: 4, name: "銀製劍", icon: "🤺", score: 150, tier: 2 },
+            { id: 5, name: "附魔弓", icon: "🏹", score: 400, tier: 3 },
+            { id: 6, name: "魔法杖", icon: "🪄", score: 1000, tier: 3 },
+            { id: 7, name: "雷神錘", icon: "🔨", score: 2500, tier: 4 },
+            { id: 8, name: "龍騎士矛", icon: "🔱", score: 6000, tier: 4 },
+            { id: 9, name: "聖光盾", icon: "🛡️", score: 15000, tier: 5 },
+            { id: 10, name: "王者之劍", icon: "👑", score: 40000, tier: 5 },
+            { id: 11, name: "神話聖杯", icon: "🏆", score: 100000, tier: 6 }
+        ];
+
+        let score = 50; 
+        let gameState = Array(16).fill(null);
+        let draggingElement = null;
+        let dragSourceIndex = null;
+        let dragProxy = document.getElementById('drag-proxy');
+
+        const cells = document.querySelectorAll('.cell');
+        const scoreDisplay = document.getElementById('score');
+        const spawnBtn = document.getElementById('spawn-btn');
+
+        function init() {
+            updateScore(0);
+            spawnItem();
+            spawnItem();
+            setupDragEvents();
+            
+            spawnBtn.addEventListener('click', () => {
+                if (score >= 5) {
+                    if (spawnItem(true)) {
+                        updateScore(-5);
+                    } else {
+                        showMessage("背包滿了！");
+                    }
+                } else {
+                    showMessage("點數不足！");
+                }
+            });
+        }
+
+        function updateScore(amount) {
+            score += amount;
+            scoreDisplay.innerText = score;
+        }
+
+        // 修改後的物品生成邏輯：包含隨機等級
+        function spawnItem(isManual = false) {
+            const emptyIndices = gameState.map((v, i) => v === null ? i : null).filter(v => v !== null);
+            if (emptyIndices.length === 0) return false;
+
+            const randomIndex = emptyIndices[Math.floor(Math.random() * emptyIndices.length)];
+            
+            // 隨機決定等級
+            let newItem;
+            const roll = Math.random() * 100;
+            if (roll < 5) { // 5% 鐵長劍 (Tier 3)
+                newItem = ITEMS[2];
+            } else if (roll < 20) { // 15% 生鏽劍 (Tier 2)
+                newItem = ITEMS[1];
+            } else { // 80% 枯木枝 (Tier 1)
+                newItem = ITEMS[0];
+            }
+
+            gameState[randomIndex] = { ...newItem };
+            renderCell(randomIndex, isManual);
+            return true;
+        }
+
+        function renderCell(index, animate = false) {
+            const cell = cells[index];
+            const data = gameState[index];
+            cell.innerHTML = '';
+            
+            if (data) {
+                const itemEl = document.createElement('div');
+                itemEl.className = `item tier-${data.tier} ${animate ? 'new-spawn-effect' : ''}`;
+                itemEl.innerHTML = `
+                    <span class="item-icon">${data.icon}</span>
+                    <span class="item-name">${data.name}</span>
+                `;
+                itemEl.dataset.index = index;
+                cell.appendChild(itemEl);
+            }
+        }
+
+        function setupDragEvents() {
+            document.addEventListener('mousedown', startDrag);
+            document.addEventListener('touchstart', startDrag, { passive: false });
+            document.addEventListener('mousemove', moveDrag);
+            document.addEventListener('touchmove', moveDrag, { passive: false });
+            document.addEventListener('mouseup', endDrag);
+            document.addEventListener('touchend', endDrag);
+        }
+
+        function startDrag(e) {
+            const target = e.target.closest('.item');
+            if (!target) return;
+
+            e.preventDefault();
+            const touch = e.touches ? e.touches[0] : e;
+            
+            dragSourceIndex = parseInt(target.dataset.index);
+            const itemData = gameState[dragSourceIndex];
+            
+            dragProxy.innerHTML = target.innerHTML;
+            dragProxy.className = `item dragging tier-${itemData.tier}`;
+            dragProxy.style.display = 'flex';
+            dragProxy.style.width = target.offsetWidth + 'px';
+            dragProxy.style.height = target.offsetHeight + 'px';
+            
+            updateProxyPosition(touch.clientX, touch.clientY);
+            target.style.opacity = '0';
+            draggingElement = target;
+        }
+
+        function moveDrag(e) {
+            if (dragSourceIndex === null) return;
+            const touch = e.touches ? e.touches[0] : e;
+            updateProxyPosition(touch.clientX, touch.clientY);
+        }
+
+        function updateProxyPosition(x, y) {
+            dragProxy.style.left = (x - dragProxy.offsetWidth / 2) + 'px';
+            dragProxy.style.top = (y - dragProxy.offsetHeight / 2) + 'px';
+        }
+
+        function endDrag(e) {
+            if (dragSourceIndex === null) return;
+
+            const touch = e.changedTouches ? e.changedTouches[0] : e;
+            dragProxy.style.display = 'none';
+            
+            const targetCell = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('.cell');
+            
+            if (targetCell) {
+                const targetIndex = parseInt(targetCell.dataset.index);
+                handleDrop(dragSourceIndex, targetIndex);
+            } else {
+                if (draggingElement) draggingElement.style.opacity = '1';
+            }
+
+            dragSourceIndex = null;
+            draggingElement = null;
+        }
+
+        function handleDrop(fromIdx, toIdx) {
+            const fromItem = gameState[fromIdx];
+            const toItem = gameState[toIdx];
+
+            if (fromIdx === toIdx) {
+                draggingElement.style.opacity = '1';
+                return;
+            }
+
+            if (toItem && toItem.id === fromItem.id) {
+                const nextItemIndex = ITEMS.findIndex(i => i.id === fromItem.id) + 1;
+                if (nextItemIndex < ITEMS.length) {
+                    gameState[toIdx] = { ...ITEMS[nextItemIndex] };
+                    gameState[fromIdx] = null;
+                    updateScore(ITEMS[nextItemIndex].score);
+                    renderCell(fromIdx);
+                    renderCell(toIdx);
+                    const newItem = cells[toIdx].querySelector('.item');
+                    newItem.classList.add('merge-flash');
+                } else {
+                    cancelMove(fromIdx);
+                }
+            } else if (!toItem) {
+                gameState[toIdx] = fromItem;
+                gameState[fromIdx] = null;
+                renderCell(fromIdx);
+                renderCell(toIdx);
+            } else {
+                gameState[fromIdx] = toItem;
+                gameState[toIdx] = fromItem;
+                renderCell(fromIdx);
+                renderCell(toIdx);
+            }
+        }
+
+        function cancelMove(idx) {
+            renderCell(idx);
+        }
+
+        function showMessage(text) {
+            const btn = document.getElementById('spawn-btn');
+            const originalText = btn.innerText;
+            btn.innerText = text;
+            btn.classList.add('opacity-50');
+            setTimeout(() => {
+                btn.innerText = originalText;
+                btn.classList.remove('opacity-50');
+            }, 1000);
+        }
+
+        init();
+    </script>
+</body>
+</html>

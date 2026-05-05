@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>球球大作戰 - 快速成長與人機對戰版</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #c0c0c0; font-family: "Microsoft JhengHei", Arial, sans-serif; }
+        canvas { display: block; cursor: crosshair; }
+        #ui {
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 15px; border-radius: 10px; pointer-events: none;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            max-width: 250px;
+        }
+        #tips b { color: #ff4757; }
+        .score-line { display: flex; justify-content: space-between; margin: 2px 0; }
+        #leaderboard { margin-top: 10px; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h2 id="score">玩家質量: 20</h2>
+        <div id="tips">
+            <b>一顆食物 +5 質量</b><br>
+            <b>滑鼠</b>: 移動<br>
+            <b>空白鍵 (Space)</b>: 分裂<br>
+            <b>W 鍵</b>: 吐球
+        </div>
+        <div id="leaderboard">
+            <b>排行榜</b>
+            <div id="board-list"></div>
+        </div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const boardListEl = document.getElementById('board-list');
+
+// 遊戲常量設定
+const MAP_WIDTH = 4000;
+const MAP_HEIGHT = 4000;
+const INITIAL_RADIUS = 20;
+const MAX_CELLS = 16; 
+const FOOD_GROWTH = 5; // 修改點 1：吃一顆家 5 點質量
+const ENEMY_COUNT = 10; // 修改點 2：加入 10 個 AI 玩家
+
+let playerCells = [];
+let foods = [];
+let ejectedMass = [];
+let viruses = [];
+let enemies = []; // 修改點 3：儲存 AI 敵人的陣列
+let camera = { x: 0, y: 0, zoom: 1 };
+let mouse = { x: 0, y: 0 };
+
+// 初始化玩家
+playerCells.push({
+    x: MAP_WIDTH / 2,
+    y: MAP_HEIGHT / 2,
+    radius: INITIAL_RADIUS,
+    color: '#ff4757',
+    vx: 0, vy: 0,
+    splitTimer: 0,
+    type: 'player',
+    name: '玩家'
+});
+
+// 初始化地圖內容
+function initMap() {
+    for (let i = 0; i < 600; i++) spawnFood(); // 增加食物數量以適應 AI
+    for (let i = 0; i < 20; i++) spawnVirus();
+    for (let i = 0; i < ENEMY_COUNT; i++) spawnEnemy();
+}
+
+function spawnFood() {
+    foods.push({
+        x: Math.random() * MAP_WIDTH,
+        y: Math.random() * MAP_HEIGHT,
+        radius: 6,
+        color: `hsl(${Math.random() * 360}, 80%, 60%)`
+    });
+}
+
+function spawnVirus() {
+    viruses.push({
+        x: Math.random() * MAP_WIDTH,
+        y: Math.random() * MAP_HEIGHT,
+        radius: 50,
+        color: '#2ecc71'
+    });
+}
+
+// 產生 AI 敵人的函數
+function spawnEnemy() {
+    let enemyNames = ['阿呆', '老王', '球神', '菜鳥', '閃電', '黑洞', '綠巨人', '獵人', '小草', '影子'];
+    let name = enemyNames[Math.floor(Math.random() * enemyNames.length)] + '_' + Math.floor(Math.random()*100);
+    enemies.push({
+        x: Math.random() * MAP_WIDTH,
+        y: Math.random() * MAP_HEIGHT,
+        radius: 15 + Math.random() * 30, // 初始比玩家稍小或稍大
+        color: '#2f3542',
+        vx: 0, vy: 0,
+        type: 'enemy',
+        name: name,
+        targetX: Math.random() * MAP_WIDTH, // 用於隨機遊走
+        targetY: Math.random() * MAP_HEIGHT,
+        aiTimer: 0
+    });
+}
+
+// 事件監聽
+window.addEventListener('mousemove', e => {
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+});
+window.addEventListener('keydown', e => {
+    if (e.code === 'Space') splitPlayer();
+    if (e.code === 'KeyW') ejectMass(playerCells);
+});
+
+// 分裂邏輯
+function splitPlayer() {
+    let newCells = [];
+    playerCells.forEach(cell => {
+        if (cell.radius > 40 && playerCells.length < MAX_CELLS) {
+            let angle = Math.atan2(mouse.y - canvas.height/2, mouse.x - canvas.width/2);
+            cell.radius /= 1.414;
+            newCells.push({
+                x: cell.x, y: cell.y,
+                radius: cell.radius,
+                color: cell.color,
+                vx: Math.cos(angle) * 18, // 增加分裂衝力以應對快速成長
+                vy: Math.sin(angle) * 18,
+                splitTimer: Date.now(),
+                type: 'player',
+                name: '玩家'
+            });
+        }
+    });
+    playerCells.push(...newCells);
+}
+
+// 吐球邏輯 (通用)
+function ejectMass(cells) {
+    cells.forEach(cell => {
+        if (cell.radius > 35) {
+            let angle;
+            if(cell.type === 'player') {
+                angle = Math.atan2(mouse.y - canvas.height/2, mouse.x - canvas.width/2);
+            } else {
+                angle = Math.atan2(cell.targetY - cell.y, cell.targetX - cell.x);
+            }
+            cell.radius -= 2;
+            ejectedMass.push({
+                x: cell.x + Math.cos(angle) * cell.radius,
+                y: cell.y + Math.sin(angle) * cell.radius,
+                radius: 10,
+                color: cell.color,
+                vx: Math.cos(angle) * 14,
+                vy: Math.sin(angle) * 14,
+                ownerType: cell.type
+            });
+        }
+    });
+}
+
+// AI 敵人邏輯 (修改點 4)
+function updateAI(enemy) {
+    if (Date.now() - enemy.aiTimer > 2000) { // 每 2 秒更換一次目標
+        // 預設目標為地圖隨機點
+        enemy.targetX = Math.random() * MAP_WIDTH;
+        enemy.targetY = Math.random() * MAP_HEIGHT;
+        enemy.aiTimer = Date.now();
+    }
+
+    // AI 吞噬與逃跑邏輯
+    let closestTarget = null;
+    let closestDist = Infinity;
+    let fleeTarget = null;
+    let fleeDist = Infinity;
+
+    // 檢測與玩家的距離
+    let playerMass = playerCells.reduce((sum, c) => sum + c.radius, 0);
+    playerCells.forEach(pCell => {
+        let d = Math.hypot(enemy.x - pCell.x, enemy.y - pCell.y);
+        if (d < 600) { // 警戒範圍
+            if (pCell.radius * 1.1 < enemy.radius && d < closestDist) {
+                closestDist = d; closestTarget = pCell; // 追逐玩家
+            } else if (pCell.radius > enemy.radius * 1.1 && d < fleeDist) {
+                fleeDist = d; fleeTarget = pCell; // 逃離玩家
+            }
+        }
+    });
+
+    // 檢測與其他 AI 的距離
+    enemies.forEach(other => {
+        if(enemy === other) return;
+        let d = Math.hypot(enemy.x - other.x, enemy.y - other.y);
+        if(d < 500) {
+            if(other.radius * 1.1 < enemy.radius && d < closestDist) {
+                closestDist = d; closestTarget = other;
+            } else if(other.radius > enemy.radius * 1.1 && d < fleeDist) {
+                fleeDist = d; fleeTarget = other;
+            }
+        }
+    });
+
+    // 決定目標
+    if(fleeTarget) {
+        // 逃跑邏輯：目標設在相反方向
+        let angle = Math.atan2(enemy.y - fleeTarget.y, enemy.x - fleeTarget.x);
+        enemy.targetX = enemy.x + Math.cos(angle) * 200;
+        enemy.targetY = enemy.y + Math.sin(angle) * 200;
+    } else if (closestTarget) {
+        enemy.targetX = closestTarget.x;
+        enemy.targetY = closestTarget.y;
+    }
+
+    // AI 移動
+    let dx = enemy.targetX - enemy.x;
+    let dy = enemy.targetY - enemy.y;
+    let dist = Math.sqrt(dx*dx + dy*dy);
+    let speed = Math.max(1, 7 / Math.sqrt(enemy.radius));
+
+    if (dist > 5) {
+        enemy.vx += (dx / dist) * 0.3;
+        enemy.vy += (dy / dist) * 0.3;
+    }
+
+    enemy.x += enemy.vx; enemy.y += enemy.vy;
+    enemy.vx *= 0.85; enemy.vy *= 0.85; // 阻力
+    
+    // 限制邊界
+    enemy.x = Math.max(0, Math.min(MAP_WIDTH, enemy.x));
+    enemy.y = Math.max(0, Math.min(MAP_HEIGHT, enemy.y));
+
+    // AI 吃到食物
+    foods.forEach((f, fi) => {
+        if (Math.hypot(enemy.x - f.x, enemy.y - f.y) < enemy.radius) {
+            enemy.radius += (FOOD_GROWTH / 20); // AI 成長稍慢，平衡質量提升
+            foods.splice(fi, 1); spawnFood();
+        }
+    });
+}
+
+function update() {
+    let totalX = 0, totalY = 0, playerTotalMass = 0;
+
+    // 更新玩家細胞
+    playerCells.forEach((cell, i) => {
+        totalX += cell.x; totalY += cell.y;
+        playerTotalMass += cell.radius;
+
+        let dx = (mouse.x - canvas.width/2);
+        let dy = (mouse.y - canvas.height/2);
+        let dist = Math.sqrt(dx*dx + dy*dy);
+        let speed = Math.max(1, 8 / Math.sqrt(cell.radius));
+
+        if (dist > 5) {
+            cell.vx += (dx / dist) * 0.3;
+            cell.vy += (dy / dist) * 0.3;
+        }
+
+        cell.x += cell.vx; cell.y += cell.vy;
+        cell.vx *= 0.85; cell.vy *= 0.85; 
+
+        cell.x = Math.max(0, Math.min(MAP_WIDTH, cell.x));
+        cell.y = Math.max(0, Math.min(MAP_HEIGHT, cell.y));
+
+        foods.forEach((f, fi) => {
+            if (Math.hypot(cell.x - f.x, cell.y - f.y) < cell.radius) {
+                cell.radius += (FOOD_GROWTH / 20); // 將質量加成除以 20，因為面積增加是半徑的平方比
+                foods.splice(fi, 1); spawnFood();
+            }
+        });
+
+        // 碰到刺球
+        viruses.forEach((v, vi) => {
+            if (Math.hypot(cell.x - v.x, cell.y - v.y) < cell.radius && cell.radius > v.radius * 1.1) {
+                viruses.splice(vi, 1); spawnVirus();
+                for(let k=0; k<2; k++) splitPlayer(); // 快速炸裂
+            }
+        });
+        
+        // 玩家細胞合併
+        playerCells.forEach((other, j) => {
+            if (i === j) return;
+            let d = Math.hypot(cell.x - other.x, cell.y - other.y);
+            if (Date.now() - cell.splitTimer > 8000 && Date.now() - other.splitTimer > 8000) {
+                if (d < cell.radius * 0.5) { // 修正合併判定，需更靠近
+                    cell.radius = Math.sqrt(cell.radius**2 + other.radius**2);
+                    playerCells.splice(j, 1);
+                }
+            } else if (d < (cell.radius + other.radius) * 0.9) {
+                let angle = Math.atan2(cell.y - other.y, cell.x - other.x);
+                cell.vx += Math.cos(angle) * 0.5;
+                cell.vy += Math.sin(angle) * 0.5;
+            }
+        });
+    });
+
+    // 更新 AI 敵人 (修改點 5：人機對戰與吞噬)
+    enemies.forEach((enemy, ei) => {
+        updateAI(enemy);
+
+        // 玩家吃敵人
+        playerCells.forEach(pCell => {
+            let d = Math.hypot(pCell.x - enemy.x, pCell.y - enemy.y);
+            if (d < pCell.radius && pCell.radius > enemy.radius * 1.1) {
+                pCell.radius = Math.sqrt(pCell.radius**2 + enemy.radius**2);
+                enemies.splice(ei, 1); spawnEnemy(); // 重生一個
+            }
+            // 敵人吃玩家
+            else if (d < enemy.radius && enemy.radius > pCell.radius * 1.1) {
+                enemy.radius = Math.sqrt(enemy.radius**2 + pCell.radius**2);
+                playerCells.splice(playerCells.indexOf(pCell), 1);
+                if (playerCells.length === 0) {
+                    alert('你被 ' + enemy.name + ' 吃掉了！重新開始。');
+                    location.reload();
+                }
+            }
+        });
+
+        // AI 敵人之間互相吞噬
+        enemies.forEach((other, oi) => {
+            if(enemy === other) return;
+            let d = Math.hypot(enemy.x - other.x, enemy.y - other.y);
+            if(d < enemy.radius && enemy.radius > other.radius * 1.1) {
+                enemy.radius = Math.sqrt(enemy.radius**2 + other.radius**2);
+                enemies.splice(oi, 1); spawnEnemy();
+            }
+        });
+
+        // AI 碰到刺球也炸裂 (簡化版炸裂)
+        viruses.forEach((v, vi) => {
+            if (Math.hypot(enemy.x - v.x, enemy.y - v.y) < enemy.radius && enemy.radius > v.radius * 1.1) {
+                viruses.splice(vi, 1); spawnVirus();
+                enemy.radius /= 1.414; // 只縮小
+            }
+        });
+    });
+
+    // 噴射物移動
+    ejectedMass.forEach((m, mi) => {
+        m.x += m.vx; m.y += m.vy;
+        m.vx *= 0.92; m.vy *= 0.92; // 調整摩擦力
+        if(Math.abs(m.vx) < 0.5 && Math.abs(m.vy) < 0.5) { ejectedMass.splice(mi, 1); } // 停下後消失
+    });
+
+    // 相機更新
+    let avgX = totalX / playerCells.length;
+    let avgY = totalY / playerCells.length;
+    camera.x += (avgX - camera.x) * 0.1;
+    camera.y += (avgY - camera.y) * 0.1;
+
+    scoreEl.innerText = `玩家質量: ${Math.floor(playerTotalMass)}`;
+    updateLeaderboard();
+}
+
+function updateLeaderboard() {
+    let allPlayers = [];
+    allPlayers.push({ name: '玩家', mass: playerCells.reduce((sum, c) => sum + c.radius, 0) });
+    enemies.forEach(e => {
+        allPlayers.push({ name: e.name, mass: e.radius });
+    });
+
+    allPlayers.sort((a, b) => b.mass - a.mass);
+
+    let html = '';
+    for (let i = 0; i < Math.min(5, allPlayers.length); i++) {
+        let p = allPlayers[i];
+        html += `<div class="score-line"><span>${i+1}. ${p.name}</span><span>${Math.floor(p.mass)}</span></div>`;
+    }
+    boardListEl.innerHTML = html;
+}
+
+function draw() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.translate(canvas.width/2 - camera.x, canvas.height/2 - camera.y);
+
+    // 繪製背景網格
+    ctx.strokeStyle = "#e0e0e0";
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= MAP_WIDTH; x += 100) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, MAP_HEIGHT); ctx.stroke();
+    }
+    for (let y = 0; y <= MAP_HEIGHT; y += 100) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(MAP_WIDTH, y); ctx.stroke();
+    }
+
+    // 繪製食物
+    foods.forEach(f => {
+        ctx.fillStyle = f.color;
+        ctx.beginPath(); ctx.arc(f.x, f.y, f.radius, 0, Math.PI*2); ctx.fill();
+    });
+
+    // 繪製噴射物
+    ejectedMass.forEach(m => {
+        ctx.fillStyle = m.color;
+        ctx.beginPath(); ctx.arc(m.x, m.y, m.radius, 0, Math.PI*2); ctx.fill();
+    });
+
+    // 繪製刺球
+    viruses.forEach(v => {
+        ctx.fillStyle = v.color;
+        ctx.beginPath();
+        for(let a=0; a<Math.PI*2; a+=0.3) {
+            let r = v.radius + (a%0.6==0 ? 8 : -3);
+            ctx.lineTo(v.x + Math.cos(a)*r, v.y + Math.sin(a)*r);
+        }
+        ctx.closePath(); ctx.fill();
+    });
+
+    // 繪製 AI 敵人
+    enemies.forEach(enemy => {
+        ctx.fillStyle = enemy.color;
+        ctx.beginPath(); ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = 3; ctx.stroke();
+        
+        ctx.fillStyle = 'black'; ctx.font = '16px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(enemy.name, enemy.x, enemy.y + 6);
+    });
+
+    // 繪製玩家
+    playerCells.forEach(cell => {
+        ctx.fillStyle = cell.color;
+        ctx.shadowBlur = 15; ctx.shadowColor = 'rgba(0,0,0,0.2)';
+        ctx.beginPath(); ctx.arc(cell.x, cell.y, cell.radius, 0, Math.PI*2); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(0,0,0,0.1)'; ctx.lineWidth = 4; ctx.stroke();
+    });
+
+    ctx.restore();
+    update();
+    requestAnimationFrame(draw);
+}
+
+initMap();
+draw();
+</script>
+</body>
+</html>

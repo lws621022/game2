@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>古廟逃亡：極限挑戰</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a0f00;
+            font-family: 'Georgia', serif;
+            touch-action: none;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: #ffd700;
+            pointer-events: none;
+            text-align: right;
+            z-index: 5;
+        }
+        .stats-box {
+            background: rgba(40, 20, 0, 0.85);
+            padding: 15px 25px;
+            border: 3px solid #d4af37;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.7);
+        }
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, rgba(60,30,0,0.85) 0%, rgba(0,0,0,0.98) 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #ffd700;
+            z-index: 10;
+        }
+        .btn {
+            padding: 15px 60px;
+            background: #b22222;
+            border: 4px solid #800000;
+            color: #fff;
+            font-size: 1.8rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 30px;
+            box-shadow: 0 6px 0 #500000;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        .btn:hover {
+            background: #d23232;
+            transform: translateY(-2px);
+        }
+        #warning-flash {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 0, 0, 0.2);
+            pointer-events: none;
+            display: none;
+            z-index: 8;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    <div id="warning-flash"></div>
+    
+    <div id="ui-layer">
+        <div class="stats-box">
+            <div class="text-xs uppercase tracking-widest text-red-400 mb-1 font-bold">Hardcore Score</div>
+            <div class="text-5xl font-serif font-bold italic" style="color: #ffffff; text-shadow: 0 0 10px #ffd700;"><span id="score">0</span></div>
+            <div class="text-sm text-orange-200 mt-2 font-mono">VELOCITY: <span id="speedDisplay">0</span> km/h</div>
+        </div>
+    </div>
+
+    <div id="overlay">
+        <h1 class="text-7xl font-serif font-black mb-2 text-center text-red-600" style="text-shadow: 4px 4px 0 #000;">EXTREME RUN</h1>
+        <p class="text-2xl mb-8 italic text-orange-200">難度已鎖定：極限。祝你好運。</p>
+        <div class="grid grid-cols-2 gap-x-10 gap-y-3 text-lg text-orange-100 border-t border-b border-orange-900 py-6 mb-4 px-10">
+            <div class="text-right">跳躍 (Jump):</div><div class="text-left font-bold">[W / ↑]</div>
+            <div class="text-right">滑行 (Crouch):</div><div class="text-left font-bold">[S / ↓]</div>
+            <div class="text-right">移動 (L/R):</div><div class="text-left font-bold">[A / D]</div>
+        </div>
+        <button id="startBtn" class="btn">接受挑戰</button>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const speedDisplayEl = document.getElementById('speedDisplay');
+    const overlay = document.getElementById('overlay');
+    const startBtn = document.getElementById('startBtn');
+    const warningFlash = document.getElementById('warning-flash');
+
+    const LANES = [-220, 0, 220]; 
+    const CAMERA_HEIGHT = 135;
+    const INITIAL_SPEED = 22; // 初始速度提高
+    const SPEED_INCREMENT = 0.008; // 速度成長加快
+
+    let gameState = 'START';
+    let score = 0;
+    let speed = INITIAL_SPEED;
+    
+    let camera = {
+        laneIndex: 1,
+        x: 0,
+        y: CAMERA_HEIGHT,
+        targetX: 0,
+        tilt: 0,
+        targetTilt: 0,
+        bob: 0
+    };
+
+    let playerState = {
+        isJumping: false,
+        jumpVel: 0,
+        isCrouching: false,
+        crouchAmount: 0,
+        armSwing: 0
+    };
+
+    let obstacles = [];
+    let worldStep = 0;
+    let lastSpawnTime = 0;
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    window.addEventListener('keydown', e => {
+        if (gameState !== 'PLAYING') return;
+        const key = e.key.toLowerCase();
+        
+        if ((key === 'arrowleft' || key === 'a') && camera.laneIndex > 0) {
+            camera.laneIndex--;
+            camera.targetTilt = -0.08;
+        }
+        if ((key === 'arrowright' || key === 'd') && camera.laneIndex < 2) {
+            camera.laneIndex++;
+            camera.targetTilt = 0.08;
+        }
+        if ((key === 'arrowup' || key === 'w' || e.key === ' ') && !playerState.isJumping) {
+            playerState.isJumping = true;
+            playerState.jumpVel = 23;
+        }
+        if (key === 'arrowdown' || key === 's') {
+            playerState.isCrouching = true;
+        }
+    });
+
+    window.addEventListener('keyup', e => {
+        const key = e.key.toLowerCase();
+        if (key === 'arrowdown' || key === 's') playerState.isCrouching = false;
+        if (['arrowleft', 'arrowright', 'a', 'd'].includes(key)) camera.targetTilt = 0;
+    });
+
+    function spawnObstacle() {
+        // 隨著速度提升，難度組合增加
+        const rand = Math.random();
+        
+        if (rand > 0.3) {
+            // 單一隨機障礙
+            const lane = Math.floor(Math.random() * 3);
+            createObs(lane);
+        } else {
+            // 雙賽道封鎖 (夾縫生存)
+            const safeLane = Math.floor(Math.random() * 3);
+            [0, 1, 2].forEach(l => {
+                if (l !== safeLane) createObs(l, Math.random() > 0.5 ? 'log' : 'tree');
+            });
+        }
+    }
+
+    function createObs(lane, forceType = null) {
+        const type = forceType || (Math.random() > 0.4 ? 'log' : 'tree');
+        obstacles.push({
+            lane: lane,
+            z: 6000,
+            type: type,
+            width: 200,
+            height: type === 'log' ? 90 : 380,
+            yOffset: type === 'log' ? 0 : 200
+        });
+    }
+
+    function resetGame() {
+        score = 0;
+        speed = INITIAL_SPEED;
+        camera.laneIndex = 1;
+        camera.x = LANES[1];
+        camera.y = CAMERA_HEIGHT;
+        obstacles = [];
+        gameState = 'PLAYING';
+        overlay.style.display = 'none';
+        lastSpawnTime = 0;
+    }
+
+    startBtn.onclick = resetGame;
+
+    function update() {
+        if (gameState !== 'PLAYING') return;
+
+        score += Math.floor(speed / 5);
+        scoreEl.innerText = score;
+        speedDisplayEl.innerText = Math.floor(speed * 5);
+        speed += SPEED_INCREMENT;
+
+        // 攝影機物理
+        camera.targetX = LANES[camera.laneIndex];
+        camera.x += (camera.targetX - camera.x) * 0.2; // 移動更快更靈敏
+        camera.tilt += (camera.targetTilt - camera.tilt) * 0.15;
+
+        // 跳躍與下蹲
+        if (playerState.isJumping) {
+            camera.y += playerState.jumpVel;
+            playerState.jumpVel -= 1.0; // 重力更強
+            if (camera.y <= CAMERA_HEIGHT) {
+                camera.y = CAMERA_HEIGHT;
+                playerState.isJumping = false;
+            }
+        }
+        const targetCrouch = playerState.isCrouching ? 85 : 0;
+        playerState.crouchAmount += (targetCrouch - playerState.crouchAmount) * 0.3;
+        
+        worldStep += speed * 0.02;
+        camera.bob = Math.sin(worldStep * 1.5) * (speed * 0.35);
+        playerState.armSwing = Math.sin(worldStep * 0.7);
+
+        // 動態生成頻率隨速度加快
+        const spawnInterval = Math.max(400, 1000 - speed * 15);
+        if (Date.now() - lastSpawnTime > spawnInterval) {
+            spawnObstacle();
+            lastSpawnTime = Date.now();
+        }
+
+        // 碰撞檢測
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+            let obs = obstacles[i];
+            obs.z -= speed;
+            
+            // 碰撞判定範圍
+            if (obs.z < 120 && obs.z > -40 && obs.lane === camera.laneIndex) {
+                const headY = camera.y - playerState.crouchAmount;
+                if (obs.type === 'log' && headY < CAMERA_HEIGHT + obs.height - 20) gameOver("你撞碎了骨頭！");
+                if (obs.type === 'tree' && headY > obs.yOffset + 20) gameOver("你的頭撞上了石壁！");
+            }
+            
+            if (obs.z < -200) obstacles.splice(i, 1);
+        }
+    }
+
+    function gameOver(msg) {
+        gameState = 'GAMEOVER';
+        warningFlash.style.display = 'block';
+        setTimeout(() => {
+            overlay.style.display = 'flex';
+            overlay.innerHTML = `
+                <h1 class="text-6xl font-serif font-black mb-2 text-red-700">任務失敗</h1>
+                <p class="text-xl mb-4 italic text-orange-200">${msg}</p>
+                <p class="text-4xl font-bold mb-8">最終分數: ${score}</p>
+                <button onclick="location.reload()" class="btn">重新連結意識</button>
+            `;
+            warningFlash.style.display = 'none';
+        }, 100);
+    }
+
+    function drawArms() {
+        const swing = playerState.armSwing;
+        const crouch = playerState.crouchAmount * 0.6;
+        const jumpY = (camera.y - CAMERA_HEIGHT) * 0.6;
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height);
+        
+        const armWidth = 75;
+        const armHeight = 300;
+        const skinColor = '#5d4037';
+        const sleeveColor = '#d4af37'; // 金色裝飾
+
+        // 右手
+        ctx.save();
+        ctx.translate(240 + swing * 30, -90 + swing * 40 + crouch - jumpY);
+        ctx.rotate(-0.3 + swing * 0.15);
+        ctx.fillStyle = '#8b4513'; ctx.fillRect(-armWidth/2, 0, armWidth, armHeight);
+        ctx.fillStyle = skinColor; ctx.fillRect(-armWidth/2, -45, armWidth, 55);
+        ctx.restore();
+
+        // 左手
+        ctx.save();
+        ctx.translate(-240 - swing * 30, -90 - swing * 40 + crouch - jumpY);
+        ctx.rotate(0.3 - swing * 0.15);
+        ctx.fillStyle = '#8b4513'; ctx.fillRect(-armWidth/2, 0, armWidth, armHeight);
+        ctx.fillStyle = skinColor; ctx.fillRect(-armWidth/2, -45, armWidth, 55);
+        ctx.restore();
+        ctx.restore();
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const fov = 500;
+        const viewY = camera.y - playerState.crouchAmount + camera.bob;
+
+        // 渲染地面與牆壁
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate(camera.tilt);
+
+        // 地面石磚
+        const horizonZ = 5000;
+        for (let z = (worldStep * speed * 1.2) % 500; z < horizonZ; z += 500) {
+            const p1 = fov / (fov + z);
+            const p2 = fov / (fov + z + 500);
+            const w1 = 1200 * p1;
+            const w2 = 1200 * p2;
+            const y1 = viewY * p1;
+            const y2 = viewY * p2;
+
+            ctx.fillStyle = (Math.floor((z + worldStep * speed * 1.2) / 500) % 2 === 0) ? '#221100' : '#1a0d00';
+            ctx.beginPath();
+            ctx.moveTo(-w1, y1); ctx.lineTo(w1, y1);
+            ctx.lineTo(w2, y2); ctx.lineTo(-w2, y2);
+            ctx.fill();
+            
+            // 地面裝飾線
+            ctx.strokeStyle = 'rgba(212, 175, 55, 0.2)';
+            ctx.stroke();
+        }
+
+        // 繪製障礙物
+        obstacles.sort((a,b) => b.z - a.z).forEach(obs => {
+            const p = fov / (fov + obs.z);
+            if (obs.z < 0) return;
+
+            const x = (LANES[obs.lane] - camera.x) * p;
+            const y = (viewY - obs.yOffset) * p;
+            const w = obs.width * p;
+            const h = obs.height * p;
+            
+            if (obs.type === 'log') {
+                // 圓木障礙 (火紅)
+                const grad = ctx.createLinearGradient(x-w/2, y, x+w/2, y);
+                grad.addColorStop(0, '#800000');
+                grad.addColorStop(0.5, '#b22222');
+                grad.addColorStop(1, '#800000');
+                ctx.fillStyle = grad;
+                ctx.fillRect(x - w/2, y - h, w, h);
+                ctx.strokeStyle = '#ffd700';
+                ctx.lineWidth = 2 * p;
+                ctx.strokeRect(x - w/2, y - h, w, h);
+            } else {
+                // 巨石牆 (暗灰)
+                ctx.fillStyle = '#2f2f2f';
+                ctx.fillRect(x - w/2, y - h, w, h);
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 1 * p;
+                ctx.strokeRect(x - w/2, y - h, w, h);
+            }
+        });
+
+        ctx.restore();
+
+        // 繪製手部
+        drawArms();
+
+        // 極限速度時的動態效果 (Vignette)
+        const intensity = Math.min(0.8, speed / 80);
+        const vignette = ctx.createRadialGradient(centerX, centerY, centerX * 0.4, centerX, centerY, centerX * 1.5);
+        vignette.addColorStop(0, 'transparent');
+        vignette.addColorStop(1, `rgba(0,0,0,${intensity})`);
+        ctx.fillStyle = vignette;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        requestAnimationFrame(() => {
+            update();
+            draw();
+        });
+    }
+
+    draw();
+
+</script>
+</body>
+</html>

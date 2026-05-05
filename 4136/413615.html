@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>經典俄羅斯方塊 - 生命值版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #1a1a2e;
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: manipulation;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+            border: 4px solid #16213e;
+            background-color: #0f3460;
+        }
+        canvas {
+            display: block;
+        }
+        .controls-btn {
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .heart {
+            color: #ff4d4d;
+            text-shadow: 0 0 5px rgba(255, 77, 77, 0.5);
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="mb-6 text-center">
+        <h1 class="text-4xl font-bold mb-2 tracking-widest text-blue-400">TETRIS</h1>
+        <div class="flex flex-col gap-2 items-center">
+            <div id="lives-container" class="flex gap-2 text-2xl mb-1">
+                <!-- 生命值圖示會生成在這裡 -->
+            </div>
+            <div class="flex gap-4 justify-center text-xl">
+                <p>分數: <span id="score" class="font-mono text-yellow-400">0</span></p>
+                <p>等級: <span id="level" class="font-mono text-green-400">1</span></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex flex-col md:flex-row gap-8 items-start">
+        <!-- 遊戲主體 -->
+        <div id="game-container" class="rounded-lg overflow-hidden">
+            <canvas id="tetris" width="240" height="400"></canvas>
+        </div>
+
+        <!-- 側邊資訊與操作說明 -->
+        <div class="flex flex-col gap-4">
+            <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 w-48">
+                <p class="text-sm text-slate-400 mb-2">下一個方塊:</p>
+                <canvas id="next" width="80" height="80"></canvas>
+            </div>
+            
+            <button id="start-btn" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded-full transition-all transform active:scale-95 shadow-lg">
+                開始遊戲
+            </button>
+
+            <div class="hidden md:block text-xs text-slate-400 mt-4 leading-loose">
+                操作說明：<br>
+                ← → : 左右移動<br>
+                ↑ : 旋轉方塊<br>
+                ↓ : 加速下落<br>
+                空白鍵 : 直接到底
+            </div>
+        </div>
+    </div>
+
+    <!-- 手機端控制器 -->
+    <div class="grid grid-cols-3 gap-2 mt-8 md:hidden w-full max-w-[300px]">
+        <div></div>
+        <button id="ctrl-up" class="controls-btn bg-slate-700 p-4 rounded-lg flex justify-center items-center h-16">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+        </button>
+        <div></div>
+        <button id="ctrl-left" class="controls-btn bg-slate-700 p-4 rounded-lg flex justify-center items-center h-16">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+        </button>
+        <button id="ctrl-down" class="controls-btn bg-slate-700 p-4 rounded-lg flex justify-center items-center h-16">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+        </button>
+        <button id="ctrl-right" class="controls-btn bg-slate-700 p-4 rounded-lg flex justify-center items-center h-16">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+        </button>
+        <div class="col-span-3">
+            <button id="ctrl-space" class="controls-btn bg-blue-700 w-full p-3 mt-2 rounded-lg font-bold">瞬間降落</button>
+        </div>
+    </div>
+
+    <!-- 結束對話框 -->
+    <div id="game-over" class="fixed inset-0 bg-black bg-opacity-80 hidden flex flex-col items-center justify-center z-50">
+        <h2 class="text-6xl font-bold text-red-500 mb-4">GAME OVER</h2>
+        <p class="text-2xl mb-8">最終分數: <span id="final-score">0</span></p>
+        <button id="restart-btn" class="bg-white text-black font-bold py-3 px-10 rounded-full hover:bg-gray-200">重新開始 (3條命)</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('tetris');
+        const context = canvas.getContext('2d');
+        const nextCanvas = document.getElementById('next');
+        const nextContext = nextCanvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const levelElement = document.getElementById('level');
+        const livesContainer = document.getElementById('lives-container');
+
+        context.scale(20, 20);
+        nextContext.scale(20, 20);
+
+        const colors = [
+            null,
+            '#FF0D72', // T
+            '#0DC2FF', // I
+            '#0DFF72', // S
+            '#F538FF', // Z
+            '#FF8E0D', // L
+            '#FFE138', // O
+            '#3877FF', // J
+        ];
+
+        function createMatrix(w, h) {
+            const matrix = [];
+            while (h--) {
+                matrix.push(new Array(w).fill(0));
+            }
+            return matrix;
+        }
+
+        function createPiece(type) {
+            if (type === 'I') {
+                return [[0, 1, 0, 0], [0, 1, 0, 0], [0, 1, 0, 0], [0, 1, 0, 0]];
+            } else if (type === 'L') {
+                return [[0, 2, 0], [0, 2, 0], [0, 2, 2]];
+            } else if (type === 'J') {
+                return [[0, 3, 0], [0, 3, 0], [3, 3, 0]];
+            } else if (type === 'O') {
+                return [[4, 4], [4, 4]];
+            } else if (type === 'Z') {
+                return [[5, 5, 0], [0, 5, 5], [0, 0, 0]];
+            } else if (type === 'S') {
+                return [[0, 6, 6], [6, 6, 0], [0, 0, 0]];
+            } else if (type === 'T') {
+                return [[0, 7, 0], [7, 7, 7], [0, 0, 0]];
+            }
+        }
+
+        function drawMatrix(matrix, offset, ctx = context) {
+            matrix.forEach((row, y) => {
+                row.forEach((value, x) => {
+                    if (value !== 0) {
+                        ctx.fillStyle = colors[value];
+                        ctx.fillRect(x + offset.x, y + offset.y, 1, 1);
+                        ctx.lineWidth = 0.05;
+                        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                        ctx.strokeRect(x + offset.x, y + offset.y, 1, 1);
+                    }
+                });
+            });
+        }
+
+        function collide(arena, player) {
+            const [m, o] = [player.matrix, player.pos];
+            for (let y = 0; y < m.length; ++y) {
+                for (let x = 0; x < m[y].length; ++x) {
+                    if (m[y][x] !== 0 &&
+                       (arena[y + o.y] && arena[y + o.y][x + o.x]) !== 0) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        function merge(arena, player) {
+            player.matrix.forEach((row, y) => {
+                row.forEach((value, x) => {
+                    if (value !== 0) {
+                        arena[y + player.pos.y][x + player.pos.x] = value;
+                    }
+                });
+            });
+        }
+
+        function rotate(matrix, dir) {
+            for (let y = 0; y < matrix.length; ++y) {
+                for (let x = 0; x < y; ++x) {
+                    [matrix[x][y], matrix[y][x]] = [matrix[y][x], matrix[x][y]];
+                }
+            }
+            if (dir > 0) matrix.forEach(row => row.reverse());
+            else matrix.reverse();
+        }
+
+        function arenaSweep() {
+            let rowCount = 1;
+            outer: for (let y = arena.length - 1; y > 0; --y) {
+                for (let x = 0; x < arena[y].length; ++x) {
+                    if (arena[y][x] === 0) continue outer;
+                }
+                const row = arena.splice(y, 1)[0].fill(0);
+                arena.unshift(row);
+                ++y;
+                player.score += rowCount * 10;
+                rowCount *= 2;
+            }
+            updateScore();
+        }
+
+        function playerDrop() {
+            player.pos.y++;
+            if (collide(arena, player)) {
+                player.pos.y--;
+                merge(arena, player);
+                playerReset();
+                arenaSweep();
+                updateScore();
+            }
+            dropCounter = 0;
+        }
+
+        function playerMove(dir) {
+            player.pos.x += dir;
+            if (collide(arena, player)) {
+                player.pos.x -= dir;
+            }
+        }
+
+        function playerReset() {
+            const pieces = 'ILJOTSZ';
+            if (player.next === null) {
+                player.next = createPiece(pieces[pieces.length * Math.random() | 0]);
+            }
+            
+            player.matrix = player.next;
+            player.next = createPiece(pieces[pieces.length * Math.random() | 0]);
+            player.pos.y = 0;
+            player.pos.x = (arena[0].length / 2 | 0) - (player.matrix[0].length / 2 | 0);
+            
+            if (collide(arena, player)) {
+                // 如果一出生就碰撞，觸發扣生命值機制
+                handleLoss();
+            }
+            
+            drawNext();
+        }
+
+        function handleLoss() {
+            player.lives--;
+            updateLivesUI();
+            
+            if (player.lives <= 0) {
+                gameOver();
+            } else {
+                // 還有命，清空盤面繼續
+                arena.forEach(row => row.fill(0));
+                // 重新生成當前方塊避免卡死
+                const pieces = 'ILJOTSZ';
+                player.matrix = createPiece(pieces[pieces.length * Math.random() | 0]);
+                player.pos.y = 0;
+                player.pos.x = (arena[0].length / 2 | 0) - (player.matrix[0].length / 2 | 0);
+            }
+        }
+
+        function playerRotate(dir) {
+            const pos = player.pos.x;
+            let offset = 1;
+            rotate(player.matrix, dir);
+            while (collide(arena, player)) {
+                player.pos.x += offset;
+                offset = -(offset + (offset > 0 ? 1 : -1));
+                if (offset > player.matrix[0].length) {
+                    rotate(player.matrix, -dir);
+                    player.pos.x = pos;
+                    return;
+                }
+            }
+        }
+
+        function drawNext() {
+            nextContext.fillStyle = '#0f3460';
+            nextContext.fillRect(0, 0, nextCanvas.width, nextCanvas.height);
+            drawMatrix(player.next, {x: 1, y: 1}, nextContext);
+        }
+
+        let dropCounter = 0;
+        let dropInterval = 1000;
+        let lastTime = 0;
+        let isPaused = true;
+
+        function update(time = 0) {
+            if (isPaused) return;
+            const deltaTime = time - lastTime;
+            lastTime = time;
+            dropCounter += deltaTime;
+            if (dropCounter > dropInterval) playerDrop();
+            draw();
+            requestAnimationFrame(update);
+        }
+
+        function updateScore() {
+            scoreElement.innerText = player.score;
+            const newLevel = Math.floor(player.score / 100) + 1;
+            levelElement.innerText = newLevel;
+            dropInterval = Math.max(100, 1000 - (newLevel - 1) * 100);
+        }
+
+        function updateLivesUI() {
+            livesContainer.innerHTML = '';
+            for (let i = 0; i < 3; i++) {
+                const heart = document.createElement('span');
+                heart.innerHTML = '❤️';
+                heart.className = 'heart transition-opacity duration-300';
+                if (i >= player.lives) {
+                    heart.style.opacity = '0.2';
+                    heart.style.filter = 'grayscale(100%)';
+                }
+                livesContainer.appendChild(heart);
+            }
+        }
+
+        function draw() {
+            context.fillStyle = '#0f3460';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            drawMatrix(arena, {x: 0, y: 0});
+            drawMatrix(player.matrix, player.pos);
+        }
+
+        function gameOver() {
+            isPaused = true;
+            document.getElementById('final-score').innerText = player.score;
+            document.getElementById('game-over').classList.remove('hidden');
+        }
+
+        const arena = createMatrix(12, 20);
+        const player = {
+            pos: {x: 0, y: 0},
+            matrix: null,
+            next: null,
+            score: 0,
+            lives: 3
+        };
+
+        // 初始化生命值 UI
+        updateLivesUI();
+
+        document.addEventListener('keydown', event => {
+            if (isPaused) return;
+            if (event.keyCode === 37) playerMove(-1);
+            else if (event.keyCode === 39) playerMove(1);
+            else if (event.keyCode === 40) playerDrop();
+            else if (event.keyCode === 38) playerRotate(1);
+            else if (event.keyCode === 32) {
+                while (!collide(arena, player)) player.pos.y++;
+                player.pos.y--;
+                merge(arena, player);
+                playerReset();
+                arenaSweep();
+                updateScore();
+            }
+        });
+
+        document.getElementById('start-btn').addEventListener('click', () => {
+            if (isPaused) {
+                isPaused = false;
+                document.getElementById('start-btn').innerText = '暫停遊戲';
+                if (!player.matrix) playerReset();
+                update();
+            } else {
+                isPaused = true;
+                document.getElementById('start-btn').innerText = '繼續遊戲';
+            }
+        });
+
+        document.getElementById('restart-btn').addEventListener('click', () => {
+            arena.forEach(row => row.fill(0));
+            player.score = 0;
+            player.lives = 3;
+            updateScore();
+            updateLivesUI();
+            document.getElementById('game-over').classList.add('hidden');
+            isPaused = false;
+            playerReset();
+            update();
+        });
+
+        // 觸控
+        document.getElementById('ctrl-left').onclick = () => playerMove(-1);
+        document.getElementById('ctrl-right').onclick = () => playerMove(1);
+        document.getElementById('ctrl-down').onclick = () => playerDrop();
+        document.getElementById('ctrl-up').onclick = () => playerRotate(1);
+        document.getElementById('ctrl-space').onclick = () => {
+            while (!collide(arena, player)) player.pos.y++;
+            player.pos.y--;
+            merge(arena, player);
+            playerReset();
+            arenaSweep();
+            updateScore();
+        };
+
+        draw();
+    </script>
+</body>
+</html>

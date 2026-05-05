@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>飛機射擊網頁遊戲</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #000;
+            border: 4px solid #444;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 20px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        分數: <span id="score">0</span><br>
+        生命: <span id="lives">3</span>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const livesEl = document.getElementById('lives');
+
+        canvas.width = 600;
+        canvas.height = 800;
+
+        // 遊戲狀態
+        let score = 0;
+        let lives = 3;
+        let gameOver = false;
+        let gameActive = true;
+
+        // 按鍵監聽
+        const keys = {};
+        window.addEventListener('keydown', e => keys[e.code] = true);
+        window.addEventListener('keyup', e => keys[e.code] = false);
+
+        // 玩家物件
+        const player = {
+            x: canvas.width / 2 - 20,
+            y: canvas.height - 60,
+            w: 40,
+            h: 40,
+            speed: 5,
+            color: '#00D2FF',
+            lastShot: 0,
+            shotDelay: 150 // 射擊間隔(ms)
+        };
+
+        let bullets = [];
+        let enemies = [];
+
+        // 建立敵人
+        function spawnEnemy() {
+            if (gameOver) return;
+            const size = Math.random() * 30 + 20;
+            enemies.push({
+                x: Math.random() * (canvas.width - size),
+                y: -size,
+                w: size,
+                h: size,
+                speed: Math.random() * 2 + 2,
+                color: '#FF4136'
+            });
+        }
+
+        // 每一秒生成一個敵人
+        setInterval(spawnEnemy, 1000);
+
+        function update() {
+            if (gameOver) return;
+
+            // 1. 玩家移動
+            if (keys['ArrowUp'] && player.y > 0) player.y -= player.speed;
+            if (keys['ArrowDown'] && player.y < canvas.height - player.h) player.y += player.speed;
+            if (keys['ArrowLeft'] && player.x > 0) player.x -= player.speed;
+            if (keys['ArrowRight'] && player.x < canvas.width - player.w) player.x += player.speed;
+
+            // 2. 射擊
+            if (keys['Space']) {
+                const now = Date.now();
+                if (now - player.lastShot > player.shotDelay) {
+                    bullets.push({ x: player.x + player.w/2 - 2, y: player.y, w: 4, h: 10 });
+                    player.lastShot = now;
+                }
+            }
+
+            // 3. 更新子彈
+            bullets.forEach((b, index) => {
+                b.y -= 10;
+                if (b.y < 0) bullets.splice(index, 1);
+            });
+
+            // 4. 更新敵人與碰撞偵測
+            enemies.forEach((en, enIndex) => {
+                en.y += en.speed;
+
+                // 敵人出界
+                if (en.y > canvas.height) enemies.splice(enIndex, 1);
+
+                // 子彈擊中敵人
+                bullets.forEach((b, bIndex) => {
+                    if (b.x < en.x + en.w && b.x + b.w > en.x && b.y < en.y + en.h && b.y + b.h > en.y) {
+                        enemies.splice(enIndex, 1);
+                        bullets.splice(bIndex, 1);
+                        score += 100;
+                        scoreEl.innerText = score;
+                    }
+                });
+
+                // 玩家撞到敵人
+                if (player.x < en.x + en.w && player.x + player.w > en.x && player.y < en.y + en.h && player.y + player.h > en.y) {
+                    enemies.splice(enIndex, 1);
+                    lives--;
+                    livesEl.innerText = lives;
+                    // 重置位置
+                    player.x = canvas.width / 2 - 20;
+                    player.y = canvas.height - 60;
+                    
+                    if (lives <= 0) {
+                        gameOver = true;
+                        alert("遊戲結束！最終得分: " + score);
+                        location.reload(); // 重新開始
+                    }
+                }
+            });
+        }
+
+        function draw() {
+            // 清除畫布
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 畫玩家 (三角形戰機)
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            ctx.moveTo(player.x + player.w / 2, player.y);
+            ctx.lineTo(player.x, player.y + player.h);
+            ctx.lineTo(player.x + player.w, player.y + player.h);
+            ctx.closePath();
+            ctx.fill();
+
+            // 畫子彈
+            ctx.fillStyle = '#FFDC00';
+            bullets.forEach(b => ctx.fillRect(b.x, b.y, b.w, b.h));
+
+            // 畫敵人
+            ctx.fillStyle = '#FF4136';
+            enemies.forEach(en => {
+                ctx.fillRect(en.x, en.y, en.w, en.h);
+                // 畫一個簡單的裝飾線
+                ctx.strokeStyle = "white";
+                ctx.strokeRect(en.x, en.y, en.w, en.h);
+            });
+
+            requestAnimationFrame(() => {
+                update();
+                draw();
+            });
+        }
+
+        // 啟動遊戲
+        draw();
+    </script>
+</body>
+</html>

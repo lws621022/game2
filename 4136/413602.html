@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>霓虹跑者 - 專業版</title>
+    <style>
+        :root {
+            --primary-color: #00a8b5;
+            --secondary-color: #b52b8d;
+            --danger-color: #9e1b32;
+            --bg-color: #05050a;
+            --text-color: #d1d1d1;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: var(--bg-color);
+            font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+            color: var(--text-color);
+        }
+
+        #game-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            height: 450px;
+            background: #080812;
+            border: 1px solid #222;
+            border-radius: 8px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none;
+        }
+
+        .menu-card {
+            background: rgba(5, 5, 10, 0.98);
+            padding: 2.5rem;
+            border-radius: 4px;
+            text-align: center;
+            pointer-events: auto;
+            border: 1px solid #333;
+        }
+
+        h1 {
+            color: var(--primary-color);
+            margin: 0 0 1rem 0;
+            letter-spacing: 4px;
+            font-weight: 300;
+        }
+
+        .stats-container {
+            position: absolute;
+            top: 15px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: none;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        .stat-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .stat-item {
+            background: rgba(255,255,255,0.05);
+            padding: 4px 10px;
+            font-size: 0.9rem;
+            border-left: 2px solid var(--primary-color);
+        }
+
+        .lives-container {
+            display: flex;
+            gap: 6px;
+        }
+
+        .heart {
+            width: 12px;
+            height: 12px;
+            background-color: var(--danger-color);
+            transform: rotate(-45deg);
+            display: inline-block;
+            position: relative;
+        }
+        .heart:before, .heart:after {
+            content: "";
+            width: 12px;
+            height: 12px;
+            background-color: var(--danger-color);
+            border-radius: 50%;
+            position: absolute;
+        }
+        .heart:before { top: -6px; left: 0; }
+        .heart:after { left: 6px; top: 0; }
+        .heart.lost { background-color: #222; opacity: 0.3; }
+        .heart.lost:before, .heart.lost:after { background-color: #222; }
+
+        .btn {
+            background: transparent;
+            color: var(--primary-color);
+            border: 1px solid var(--primary-color);
+            padding: 10px 35px;
+            font-size: 0.9rem;
+            border-radius: 2px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .btn:hover {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .hidden { display: none !important; }
+
+        #speed-indicator {
+            position: absolute;
+            bottom: 15px;
+            right: 20px;
+            font-size: 0.7rem;
+            color: #444;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    
+    <div class="stats-container">
+        <div class="stat-group">
+            <div id="lives-display" class="lives-container"></div>
+            <div id="score-display" class="stat-item">SCORE: 0</div>
+        </div>
+        <div id="highscore-display" class="stat-item" style="border-color: var(--secondary-color);">BEST: 0</div>
+    </div>
+
+    <div id="ui-overlay">
+        <div id="start-menu" class="menu-card">
+            <h1>NEON RUNNER</h1>
+            <p style="font-size: 0.8rem; opacity: 0.6; margin-bottom: 20px;">跨越障礙，極速奔馳</p>
+            <button class="btn" id="start-btn">RUN</button>
+        </div>
+
+        <div id="game-over-menu" class="menu-card hidden">
+            <h1 style="color: var(--danger-color);">OUT OF ENERGY</h1>
+            <p id="final-score" style="font-size: 1.2rem;">0</p>
+            <p id="new-record-msg" style="color: var(--primary-color); display:none; font-size: 0.8rem; margin-bottom: 15px;">NEW RECORD ACQUIRED</p>
+            <button class="btn" id="restart-btn">RETRY</button>
+        </div>
+    </div>
+
+    <div id="speed-indicator">VELOCITY: <span id="current-speed-val">0</span> km/h</div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const startMenu = document.getElementById('start-menu');
+    const gameOverMenu = document.getElementById('game-over-menu');
+    const startBtn = document.getElementById('start-btn');
+    const restartBtn = document.getElementById('restart-btn');
+    const scoreDisplay = document.getElementById('score-display');
+    const highscoreDisplay = document.getElementById('highscore-display');
+    const livesDisplay = document.getElementById('lives-display');
+    const finalScoreText = document.getElementById('final-score');
+    const newRecordMsg = document.getElementById('new-record-msg');
+    const speedValText = document.getElementById('current-speed-val');
+
+    let gameState = 'START';
+    let score = 0;
+    let highscore = localStorage.getItem('neonWingHighscore') || 0;
+    let lives = 5;
+    let baseSpeed = 6;
+    let currentSpeed = 6;
+    let frameCount = 0;
+    let invulnerableFrames = 0;
+    
+    const GROUND_Y_OFFSET = 70;
+
+    highscoreDisplay.innerText = `BEST: ${highscore}`;
+
+    // 跑者角色：人型圖案
+    const player = {
+        x: 120,
+        y: 0,
+        width: 30, // 身體寬度
+        height: 60, // 角色總高度
+        dy: 0,
+        jumpForce: -14,
+        gravity: 0.8,
+        isGrounded: false,
+        
+        draw() {
+            ctx.save();
+            ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+            
+            if (invulnerableFrames > 0 && Math.floor(invulnerableFrames / 5) % 2 === 0) {
+                ctx.globalAlpha = 0.2;
+            }
+
+            ctx.strokeStyle = '#00a8b5';
+            ctx.fillStyle = '#00a8b5';
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+
+            // 跑步動畫參數：根據 frameCount 產生 0 ~ 1 的循環值
+            const runCycle = (frameCount * 0.15) % (Math.PI * 2);
+            const legSwing = Math.sin(runCycle) * 15;
+            const armSwing = Math.sin(runCycle + Math.PI) * 10;
+
+            // 如果在空中，腿部動作固定
+            const actualLegSwing = this.isGrounded ? legSwing : 10;
+            const actualArmSwing = this.isGrounded ? armSwing : -15;
+
+            // 1. 頭部
+            ctx.beginPath();
+            ctx.arc(0, -22, 6, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 2. 身體 (中心)
+            ctx.beginPath();
+            ctx.moveTo(0, -16);
+            ctx.lineTo(0, 5);
+            ctx.stroke();
+
+            // 3. 腿部 (前)
+            ctx.beginPath();
+            ctx.moveTo(0, 5);
+            ctx.lineTo(actualLegSwing, 25);
+            ctx.stroke();
+
+            // 4. 腿部 (後)
+            ctx.beginPath();
+            ctx.moveTo(0, 5);
+            ctx.lineTo(-actualLegSwing, 25);
+            ctx.stroke();
+
+            // 5. 手臂 (前)
+            ctx.beginPath();
+            ctx.moveTo(0, -10);
+            ctx.lineTo(actualArmSwing, 5);
+            ctx.stroke();
+
+            // 6. 手臂 (後)
+            ctx.beginPath();
+            ctx.moveTo(0, -10);
+            ctx.lineTo(-actualArmSwing, 5);
+            ctx.stroke();
+            
+            ctx.restore();
+        },
+
+        update() {
+            this.dy += this.gravity;
+            this.y += this.dy;
+
+            const groundY = canvas.height - GROUND_Y_OFFSET - this.height;
+            if (this.y > groundY) {
+                this.y = groundY;
+                this.dy = 0;
+                this.isGrounded = true;
+            } else {
+                this.isGrounded = false;
+            }
+
+            if (invulnerableFrames > 0) invulnerableFrames--;
+        },
+
+        jump() {
+            if (this.isGrounded) {
+                this.dy = this.jumpForce;
+            }
+        }
+    };
+
+    let obstacles = [];
+
+    class Obstacle {
+        constructor() {
+            this.x = canvas.width;
+            this.type = Math.floor(Math.random() * 3);
+            
+            switch(this.type) {
+                case 0: // 能量柱
+                    this.width = 25;
+                    this.height = 40;
+                    this.y = canvas.height - GROUND_Y_OFFSET - this.height;
+                    this.color = '#9e1b32';
+                    break;
+                case 1: // 防禦牆
+                    this.width = 50;
+                    this.height = 25;
+                    this.y = canvas.height - GROUND_Y_OFFSET - this.height;
+                    this.color = '#7a1a2e';
+                    break;
+                case 2: // 懸浮地雷
+                    this.width = 25;
+                    this.height = 25;
+                    this.y = canvas.height - GROUND_Y_OFFSET - 95;
+                    this.color = '#b52b8d';
+                    break;
+            }
+        }
+
+        draw() {
+            ctx.save();
+            ctx.fillStyle = this.color;
+            if (this.type === 2) {
+                // 鑽石形狀
+                ctx.translate(this.x + this.width/2, this.y + this.height/2);
+                ctx.rotate(Math.PI / 4 + frameCount * 0.1);
+                ctx.fillRect(-this.width/2, -this.height/2, this.width, this.height);
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(-this.width/2 + 2, -this.height/2 + 2, this.width - 4, this.height - 4);
+            } else {
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+                ctx.strokeRect(this.x + 2, this.y + 2, this.width - 4, this.height - 4);
+            }
+            ctx.restore();
+        }
+    }
+
+    function updateLivesDisplay() {
+        livesDisplay.innerHTML = '';
+        for (let i = 0; i < 5; i++) {
+            const heart = document.createElement('div');
+            heart.className = i < lives ? 'heart' : 'heart lost';
+            livesDisplay.appendChild(heart);
+        }
+    }
+
+    function initGame() {
+        score = 0;
+        lives = 5;
+        baseSpeed = 6;
+        currentSpeed = 6;
+        obstacles = [];
+        invulnerableFrames = 0;
+        player.y = canvas.height - GROUND_Y_OFFSET - player.height;
+        player.dy = 0;
+        frameCount = 0;
+        updateLivesDisplay();
+        scoreDisplay.innerText = `SCORE: 0`;
+        newRecordMsg.style.display = 'none';
+    }
+
+    function drawScene() {
+        const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        grad.addColorStop(0, '#05050a');
+        grad.addColorStop(1, '#0c0c1a');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.strokeStyle = '#1a1a2a';
+        ctx.lineWidth = 1;
+        const spacing = 60;
+        const scrollOffset = (frameCount * (currentSpeed * 0.4)) % spacing;
+        
+        for(let x = -scrollOffset; x < canvas.width; x += spacing) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, canvas.height);
+            ctx.stroke();
+        }
+
+        ctx.fillStyle = '#050508';
+        ctx.fillRect(0, canvas.height - GROUND_Y_OFFSET, canvas.width, GROUND_Y_OFFSET);
+        ctx.strokeStyle = '#222';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-1, canvas.height - GROUND_Y_OFFSET, canvas.width + 2, 2);
+    }
+
+    function checkCollision(p, o) {
+        if (invulnerableFrames > 0) return false;
+        
+        const pW = p.width * 0.6;
+        const pH = p.height * 0.9;
+        const pX = p.x + (p.width - pW) / 2;
+        const pY = p.y;
+
+        return pX < o.x + o.width &&
+               pX + pW > o.x &&
+               pY < o.y + o.height &&
+               pY + pH > o.y;
+    }
+
+    function gameLoop() {
+        drawScene();
+
+        if (gameState === 'PLAYING') {
+            currentSpeed = baseSpeed + (frameCount * 0.0006) + (score / 1500);
+            speedValText.innerText = Math.floor(currentSpeed * 50);
+
+            player.update();
+            player.draw();
+
+            const spawnInterval = Math.max(40, Math.floor(100 - currentSpeed * 3));
+            if (frameCount % spawnInterval === 0) {
+                obstacles.push(new Obstacle());
+            }
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obs = obstacles[i];
+                obs.x -= currentSpeed;
+                obs.draw();
+
+                if (checkCollision(player, obs)) {
+                    lives--;
+                    updateLivesDisplay();
+                    invulnerableFrames = 70;
+                    if (lives <= 0) endGame();
+                }
+
+                if (obs.x + obs.width < 0) {
+                    obstacles.splice(i, 1);
+                    score += 20;
+                    scoreDisplay.innerText = `SCORE: ${Math.floor(score)}`;
+                }
+            }
+            frameCount++;
+        } else {
+            player.draw();
+        }
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    function endGame() {
+        gameState = 'GAMEOVER';
+        finalScoreText.innerText = Math.floor(score);
+        if (score > highscore) {
+            highscore = Math.floor(score);
+            localStorage.setItem('neonWingHighscore', highscore);
+            highscoreDisplay.innerText = `BEST: ${highscore}`;
+            newRecordMsg.style.display = 'block';
+        }
+        gameOverMenu.classList.remove('hidden');
+    }
+
+    function startGame() {
+        initGame();
+        gameState = 'PLAYING';
+        startMenu.classList.add('hidden');
+        gameOverMenu.classList.add('hidden');
+    }
+
+    function resize() {
+        const container = document.getElementById('game-container');
+        canvas.width = container.clientWidth;
+        canvas.height = container.clientHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    const inputAction = (e) => {
+        if (e.code && e.code !== 'Space') return;
+        if (gameState === 'PLAYING') player.jump();
+        else if (gameState !== 'PLAYING') startGame();
+    };
+
+    window.addEventListener('keydown', inputAction);
+    canvas.addEventListener('mousedown', inputAction);
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        inputAction(e);
+    });
+
+    window.onload = gameLoop;
+</script>
+
+</body>
+</html>

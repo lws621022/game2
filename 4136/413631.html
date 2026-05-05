@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>暗影刺客：Boss 覺醒</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            background-color: #0f172a;
+            color: white;
+            font-family: 'Inter', system-ui, sans-serif;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        canvas {
+            background-color: #1e293b;
+            box-shadow: 0 0 40px rgba(0,0,0,0.6);
+            border: 4px solid #334155;
+            border-radius: 8px;
+            transition: background-color 1s ease;
+        }
+        .canvas-boss-mode {
+            background-color: #2d1b36 !important;
+            border-color: #a855f7 !important;
+        }
+        .ui-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            background: rgba(15, 23, 42, 0.8);
+            padding: 15px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+            backdrop-filter: blur(4px);
+        }
+        .health-bar-bg {
+            width: 150px;
+            height: 10px;
+            background: #450a0a;
+            border-radius: 5px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        .health-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #ef4444, #f87171);
+            transition: width 0.3s ease;
+        }
+        .boss-health-container {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 300px;
+            text-align: center;
+            display: none;
+        }
+        .boss-health-bar-bg {
+            width: 100%;
+            height: 16px;
+            background: #2e1065;
+            border-radius: 8px;
+            border: 2px solid #a855f7;
+            overflow: hidden;
+        }
+        .boss-health-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #a855f7, #d8b4fe);
+            width: 100%;
+            transition: width 0.3s ease;
+        }
+        .buff-indicator {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .timer-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="ui-panel">
+        <h1 class="text-xl font-black text-red-500 tracking-tighter">SHADOW ASSASSIN PRO</h1>
+        <div class="flex justify-between mt-2 gap-4">
+            <div>
+                <p class="text-xs text-gray-400 uppercase font-bold">當前得分</p>
+                <p id="score" class="text-2xl font-mono">0</p>
+            </div>
+            <div class="text-right">
+                <p class="text-xs text-gray-400 uppercase font-bold">最佳紀錄</p>
+                <p id="highScore" class="text-2xl font-mono text-yellow-400">0</p>
+            </div>
+        </div>
+        <div class="health-bar-bg">
+            <div id="healthFill" class="health-bar-fill" style="width: 100%"></div>
+        </div>
+        <p id="status" class="text-xs mt-2 text-green-400 font-bold uppercase">狀態: 潛行中</p>
+    </div>
+
+    <div id="bossUI" class="boss-health-container">
+        <p class="text-purple-400 font-black text-sm uppercase mb-1 tracking-widest">警告: 守衛首領出現</p>
+        <div class="boss-health-bar-bg">
+            <div id="bossHealthFill" class="boss-health-bar-fill"></div>
+        </div>
+    </div>
+
+    <div class="buff-indicator">
+        <div id="speedTimer" class="timer-badge bg-emerald-500/20 border border-emerald-500 text-emerald-400">⚡ 速度提升: <span id="speedSec">10</span>s</div>
+        <div id="invincibleTimer" class="timer-badge bg-yellow-500/20 border border-yellow-500 text-yellow-400">🛡️ 無敵狀態: <span id="invincibleSec">5</span>s</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div class="fixed bottom-6 bg-black/60 px-4 py-2 rounded-full text-sm border border-white/10">
+        擊殺數 10 召喚 Boss | <span class="text-yellow-400 font-bold">空白鍵</span> 進行背刺
+    </div>
+
+    <div id="gameOverModal" class="hidden fixed inset-0 bg-slate-950/90 flex items-center justify-center z-50">
+        <div class="bg-slate-900 p-10 rounded-2xl border-2 border-red-500 text-center shadow-2xl max-w-md w-full">
+            <h2 id="endTitle" class="text-5xl font-black mb-2 text-white">任務失敗</h2>
+            <div class="grid grid-cols-2 gap-4 my-8">
+                <div class="bg-slate-800 p-4 rounded-lg">
+                    <p class="text-xs text-gray-400">本次刺殺</p>
+                    <p id="endScore" class="text-3xl font-mono">0</p>
+                </div>
+                <div class="bg-slate-800 p-4 rounded-lg">
+                    <p class="text-xs text-gray-400">最佳</p>
+                    <p id="endHigh" class="text-3xl font-mono text-yellow-400">0</p>
+                </div>
+            </div>
+            <button onclick="resetGame()" class="w-full bg-red-600 hover:bg-red-500 text-white font-black py-4 rounded-xl transition-all">重新嘗試</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const highScoreEl = document.getElementById('highScore');
+        const healthFill = document.getElementById('healthFill');
+        const statusEl = document.getElementById('status');
+        const bossUI = document.getElementById('bossUI');
+        const bossHealthFill = document.getElementById('bossHealthFill');
+        const modal = document.getElementById('gameOverModal');
+        const speedTimer = document.getElementById('speedTimer');
+        const speedSec = document.getElementById('speedSec');
+        const invincibleTimer = document.getElementById('invincibleTimer');
+        const invincibleSec = document.getElementById('invincibleSec');
+
+        let gameActive = true;
+        let score = 0;
+        let highScore = localStorage.getItem('stealth_high_score') || 0;
+        highScoreEl.innerText = highScore;
+
+        const player = {
+            x: 100, y: 100,
+            radius: 12,
+            attackRange: 60, // 稍微增加一點判定寬容度
+            attackVisualEffect: 0,
+            canAssassinateNow: false,
+            baseSpeed: 3,
+            speed: 3,
+            angle: 0,
+            health: 3,
+            maxHealth: 3,
+            color: '#3b82f6',
+            invulnerableFrame: 0,
+            buffs: {
+                speed: 0,
+                godMode: 0
+            }
+        };
+
+        let enemies = [];
+        let bullets = [];
+        let items = [];
+        let boss = null;
+        const keys = {};
+
+        function init() {
+            resize();
+            spawnEnemy();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function resize() {
+            canvas.width = window.innerWidth * 0.85;
+            canvas.height = window.innerHeight * 0.75;
+        }
+
+        function spawnEnemy() {
+            if (boss || !gameActive) return;
+            enemies.push({
+                x: Math.random() * (canvas.width - 100) + 50,
+                y: Math.random() * (canvas.height - 100) + 50,
+                radius: 14,
+                angle: Math.random() * Math.PI * 2,
+                rotationSpeed: 0.015 + (score * 0.001),
+                viewDistance: 220,
+                viewAngle: Math.PI / 2.5,
+                color: '#ef4444',
+                shootCooldown: 0
+            });
+        }
+
+        function spawnBoss() {
+            enemies = []; 
+            canvas.classList.add('canvas-boss-mode');
+            bossUI.style.display = 'block';
+            boss = {
+                x: canvas.width / 2,
+                y: canvas.height / 2,
+                radius: 25,
+                angle: 0,
+                rotationSpeed: 0.04,
+                viewDistance: 350,
+                viewAngle: Math.PI / 1.5,
+                health: 5,
+                maxHealth: 5,
+                color: '#a855f7',
+                shootCooldown: 0,
+                teleport() {
+                    this.x = Math.random() * (canvas.width - 100) + 50;
+                    this.y = Math.random() * (canvas.height - 100) + 50;
+                }
+            };
+        }
+
+        function checkAssassination() {
+            if (!gameActive) return;
+            
+            // 標記已經執行過攻擊效果
+            player.attackVisualEffect = 10;
+
+            const targets = boss ? [boss] : enemies;
+            let hitTarget = false;
+
+            for (let i = targets.length - 1; i >= 0; i--) {
+                const target = targets[i];
+                const dx = target.x - player.x;
+                const dy = target.y - player.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+
+                // 檢查是否在攻擊範圍內
+                if (dist < player.attackRange + (boss ? 20 : 0)) {
+                    const angleToPlayer = Math.atan2(player.y - target.y, player.x - target.x);
+                    let angleDiff = angleToPlayer - target.angle;
+                    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+
+                    // 檢查是否在敵人的視野角度之外 (即背後)
+                    if (Math.abs(angleDiff) > target.viewAngle / 2) {
+                        hitTarget = true;
+                        if (boss) {
+                            boss.health--;
+                            bossHealthFill.style.width = `${(boss.health / boss.maxHealth) * 100}%`;
+                            if (boss.health <= 0) {
+                                boss = null;
+                                bossUI.style.display = 'none';
+                                canvas.classList.remove('canvas-boss-mode');
+                                score += 5;
+                                scoreEl.innerText = score;
+                                player.buffs.godMode = 300; // 5秒無敵
+                                spawnEnemy(); spawnEnemy();
+                            } else {
+                                boss.teleport();
+                            }
+                        } else {
+                            enemies.splice(i, 1);
+                            score++;
+                            scoreEl.innerText = score;
+                            if (score > 0 && score % 10 === 0) {
+                                spawnBoss();
+                            } else {
+                                spawnEnemy();
+                                if (score % 3 === 0) spawnEnemy();
+                            }
+                        }
+                        break; // 每次按空白鍵只能刺殺一個目標
+                    }
+                }
+            }
+        }
+
+        function update() {
+            if (!gameActive) return;
+
+            if (player.attackVisualEffect > 0) player.attackVisualEffect--;
+            if (player.invulnerableFrame > 0) player.invulnerableFrame--;
+
+            // Buffs
+            if (player.buffs.speed > 0) {
+                player.buffs.speed--;
+                player.speed = player.baseSpeed * 1.8;
+                speedTimer.style.display = 'block';
+                speedSec.innerText = Math.ceil(player.buffs.speed / 60);
+            } else {
+                player.speed = player.baseSpeed;
+                speedTimer.style.display = 'none';
+            }
+
+            if (player.buffs.godMode > 0) {
+                player.buffs.godMode--;
+                invincibleTimer.style.display = 'block';
+                invincibleSec.innerText = Math.ceil(player.buffs.godMode / 60);
+            } else {
+                invincibleTimer.style.display = 'none';
+            }
+
+            // Move
+            let mx = 0, my = 0;
+            if (keys['ArrowUp'] || keys['KeyW']) my -= 1;
+            if (keys['ArrowDown'] || keys['KeyS']) my += 1;
+            if (keys['ArrowLeft'] || keys['KeyA']) mx -= 1;
+            if (keys['ArrowRight'] || keys['KeyD']) mx += 1;
+            
+            if (mx !== 0 || my !== 0) {
+                const mag = Math.sqrt(mx*mx + my*my);
+                player.x += (mx / mag) * player.speed;
+                player.y += (my / mag) * player.speed;
+                player.angle = Math.atan2(my, mx);
+            }
+            player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+            player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+
+            // Bullets
+            bullets.forEach((b, i) => {
+                b.x += b.vx; b.y += b.vy; b.life--;
+                const dist = Math.hypot(player.x - b.x, player.y - b.y);
+                if (dist < player.radius + 3 && player.invulnerableFrame <= 0 && player.buffs.godMode <= 0) {
+                    takeDamage(); bullets.splice(i, 1);
+                } else if (b.life <= 0) bullets.splice(i, 1);
+            });
+
+            // Enemy/Boss Logic
+            const activeEnemies = boss ? [boss] : enemies;
+            let spotted = false;
+            activeEnemies.forEach(e => {
+                e.angle += e.rotationSpeed;
+                if (e.shootCooldown > 0) e.shootCooldown--;
+
+                const dx = player.x - e.x, dy = player.y - e.y, dist = Math.sqrt(dx*dx+dy*dy);
+                if (dist < e.viewDistance) {
+                    const angleToP = Math.atan2(dy, dx);
+                    let diff = angleToP - e.angle;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+
+                    if (Math.abs(diff) < e.viewAngle / 2) {
+                        spotted = true;
+                        if (e.shootCooldown <= 0) {
+                            const bSpeed = boss ? 8 : 6;
+                            bullets.push({ x: e.x, y: e.y, vx: Math.cos(angleToP)*bSpeed, vy: Math.sin(angleToP)*bSpeed, life: 120 });
+                            e.shootCooldown = boss ? 30 : 60;
+                        }
+                    }
+                }
+            });
+            statusEl.innerHTML = spotted ? '狀態: <span class="text-red-500">暴露！</span>' : '狀態: <span class="text-green-400">潛行中</span>';
+
+            // 實時檢查是否可以刺殺
+            player.canAssassinateNow = false;
+            activeEnemies.forEach(target => {
+                const dx = target.x - player.x, dy = target.y - player.y, dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist < player.attackRange + (boss ? 20 : 0)) {
+                    const angleToP = Math.atan2(player.y - target.y, player.x - target.x);
+                    let diff = angleToP - target.angle;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+                    if (Math.abs(diff) > target.viewAngle / 2) player.canAssassinateNow = true;
+                }
+            });
+        }
+
+        function takeDamage() {
+            player.health--;
+            player.invulnerableFrame = 60;
+            updateHealthUI();
+            if (player.health <= 0) gameOver();
+        }
+
+        function updateHealthUI() {
+            healthFill.style.width = `${(player.health / player.maxHealth) * 100}%`;
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Bullets
+            bullets.forEach(b => {
+                ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2);
+                ctx.fillStyle = boss ? '#d8b4fe' : '#fbbf24';
+                ctx.fill();
+            });
+
+            // Enemies/Boss
+            const activeEnemies = boss ? [boss] : enemies;
+            activeEnemies.forEach(e => {
+                const grad = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.viewDistance);
+                grad.addColorStop(0, boss ? 'rgba(168, 85, 247, 0.4)' : 'rgba(239, 68, 68, 0.4)');
+                grad.addColorStop(1, 'transparent');
+                ctx.beginPath(); ctx.moveTo(e.x, e.y);
+                ctx.arc(e.x, e.y, e.viewDistance, e.angle - e.viewAngle/2, e.angle + e.viewAngle/2);
+                ctx.fillStyle = grad; ctx.fill();
+
+                ctx.beginPath(); ctx.arc(e.x, e.y, e.radius, 0, Math.PI*2);
+                ctx.fillStyle = e.color; ctx.fill();
+                ctx.beginPath(); ctx.lineWidth = 4; ctx.strokeStyle = boss ? '#4c1d95' : '#991b1b';
+                ctx.moveTo(e.x, e.y); ctx.lineTo(e.x + Math.cos(e.angle)*(e.radius+8), e.y + Math.sin(e.angle)*(e.radius+8));
+                ctx.stroke();
+            });
+
+            // Player Range Circle
+            ctx.beginPath(); ctx.arc(player.x, player.y, player.attackRange + (boss ? 20 : 0), 0, Math.PI*2);
+            ctx.setLineDash([5, 5]);
+            ctx.strokeStyle = player.canAssassinateNow ? '#34d399' : 'rgba(59, 130, 246, 0.3)';
+            ctx.stroke(); ctx.setLineDash([]);
+
+            // Slash Effect (揮刀視覺)
+            if (player.attackVisualEffect > 0) {
+                ctx.beginPath(); 
+                ctx.arc(player.x, player.y, player.attackRange + 5, player.angle - 0.8, player.angle + 0.8);
+                ctx.strokeStyle = `rgba(255,255,255,${player.attackVisualEffect / 10})`;
+                ctx.lineWidth = 4; 
+                ctx.stroke();
+            }
+
+            // Player
+            if (!(player.invulnerableFrame > 0 && Math.floor(Date.now() / 100) % 2 === 0)) {
+                ctx.save(); ctx.translate(player.x, player.y); ctx.rotate(player.angle);
+                ctx.beginPath(); ctx.arc(0, 0, player.radius, 0, Math.PI*2);
+                ctx.fillStyle = player.buffs.godMode > 0 ? '#fbbf24' : player.color;
+                if (player.buffs.godMode > 0) { ctx.shadowBlur = 20; ctx.shadowColor = '#fbbf24'; }
+                ctx.fill();
+                ctx.fillStyle = 'white'; ctx.fillRect(4, -5, 4, 3); ctx.fillRect(4, 2, 4, 3);
+                ctx.restore();
+            }
+        }
+
+        function gameOver() {
+            gameActive = false;
+            if (score > highScore) {
+                highScore = score; localStorage.setItem('stealth_high_score', highScore);
+            }
+            document.getElementById('endScore').innerText = score;
+            document.getElementById('endHigh').innerText = highScore;
+            modal.classList.remove('hidden');
+        }
+
+        function resetGame() {
+            gameActive = true; score = 0; enemies = []; bullets = []; boss = null;
+            player.x = 100; player.y = 100; player.health = 3;
+            player.buffs.godMode = 0; player.buffs.speed = 0;
+            bossUI.style.display = 'none'; canvas.classList.remove('canvas-boss-mode');
+            scoreEl.innerText = '0'; updateHealthUI(); modal.classList.add('hidden');
+            spawnEnemy();
+        }
+
+        function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+        
+        // 修復後的事件監聽器
+        window.addEventListener('keydown', e => {
+            keys[e.code] = true;
+            // 處理空白鍵攻擊
+            if (e.code === 'Space' && gameActive) {
+                checkAssassination();
+            }
+        });
+        
+        window.addEventListener('keyup', e => {
+            keys[e.code] = false;
+        });
+
+        window.onload = init;
+        window.addEventListener('resize', resize);
+    </script>
+</body>
+</html>

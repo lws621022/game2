@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>荒野大鏢客：西部決鬥 - 精緻工藝版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Roboto+Condensed:wght@400;700&display=swap');
+
+        :root {
+            --rdr-red: #b30000;
+            --rdr-black: #0d0d0d;
+            --rdr-gold: #c5a059;
+        }
+
+        body {
+            background-color: var(--rdr-black);
+            color: white;
+            font-family: 'Roboto Condensed', sans-serif;
+            overflow: hidden;
+            margin: 0;
+            touch-action: none;
+            user-select: none;
+        }
+
+        .western-font {
+            font-family: 'Playfair Display', serif;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background: linear-gradient(to bottom, #a36a4d 0%, #7e4e3a 50%, #1a120b 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: none;
+        }
+
+        #game-container::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+            opacity: 0.1;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .mountain {
+            position: absolute;
+            bottom: 0;
+            width: 0; height: 0;
+            border-left: 45vw solid transparent;
+            border-right: 45vw solid transparent;
+            border-bottom: 40vh solid #120a06;
+            z-index: 1;
+            filter: blur(4px);
+        }
+
+        #crosshair {
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 110;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #crosshair::before {
+            content: '';
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background: #ff0000;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #ff0000;
+        }
+
+        /* 縮小後的手槍容器 */
+        #player-gun-container {
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            width: 400px; /* 縮小寬度 */
+            height: 400px; /* 縮小高度 */
+            z-index: 120;
+            pointer-events: none;
+            transform: translate(20%, 350px) rotate(20deg); /* 初始收槍位置更靠邊緣 */
+            transition: transform 0.6s cubic-bezier(0.15, 0.85, 0.35, 1.1);
+            transform-origin: bottom right;
+        }
+
+        .gun-drawn #player-gun-container {
+            transform: translate(-42%, 0px) rotate(0deg);
+        }
+
+        @keyframes recoil-fps {
+            0% { transform: translate(-42%, 0px) scale(1); }
+            20% { transform: translate(-42%, -50px) scale(1.1) rotate(-6deg); }
+            100% { transform: translate(-42%, 0px) scale(1); }
+        }
+        .gun-fire {
+            animation: recoil-fps 0.22s ease-out;
+        }
+
+        #muzzle-flash {
+            position: absolute;
+            width: 120px;
+            height: 120px;
+            background: radial-gradient(circle, #fff 10%, #fbbf24 40%, #b30000 70%, transparent 90%);
+            border-radius: 50%;
+            top: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            z-index: 121;
+            filter: blur(8px);
+        }
+
+        .enemy {
+            position: absolute;
+            width: 130px;
+            height: 260px;
+            z-index: 10;
+            transition: opacity 0.5s, transform 0.4s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .dead-eye-active {
+            filter: sepia(100%) saturate(600%) contrast(120%) brightness(50%);
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 40px;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 60px;
+            z-index: 50;
+        }
+
+        .stat-box {
+            background: rgba(0,0,0,0.8);
+            padding: 10px 25px;
+            border-bottom: 3px solid var(--rdr-red);
+            backdrop-filter: blur(5px);
+        }
+
+        #message-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0,0,0,0.98);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 200;
+        }
+
+        .btn {
+            background: var(--rdr-red);
+            color: white;
+            padding: 15px 60px;
+            font-size: 1.8rem;
+            border: none;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 5px;
+            box-shadow: 0 8px 0 #700;
+            transition: transform 0.1s;
+        }
+        .btn:active { transform: translateY(4px); box-shadow: 0 4px 0 #700; }
+
+        #blood-splatter {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: radial-gradient(circle, rgba(139, 0, 0, 0.25) 0%, rgba(0,0,0,0.8) 100%);
+            display: none;
+            z-index: 150;
+        }
+
+        .drawing-weapon {
+            animation: danger-pulse 0.2s infinite alternate;
+        }
+        @keyframes danger-pulse {
+            from { filter: drop-shadow(0 0 5px red); }
+            to { filter: drop-shadow(0 0 40px red) brightness(1.8); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div class="mountain" style="left: -15vw; opacity: 0.4;"></div>
+        <div class="mountain" style="right: -15vw; opacity: 0.2;"></div>
+        
+        <div id="ui-layer">
+            <div class="stat-box"><div id="score" class="text-3xl western-font text-white">0</div></div>
+            <div class="stat-box">
+                <div class="w-48 h-1.5 bg-gray-900 mt-2 border border-gray-800">
+                    <div id="energy-bar" class="h-full bg-yellow-600 w-full"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="enemy" class="enemy">
+            <svg viewBox="0 0 100 200" xmlns="http://www.w3.org/2000/svg">
+                <ellipse cx="50" cy="195" rx="30" ry="6" fill="rgba(0,0,0,0.5)" />
+                <path d="M42 135 L34 192 Q36 198 48 195 L52 155 L56 195 Q68 198 70 192 L62 135 Z" fill="#1a1a1a" />
+                <path d="M25 65 Q50 55 80 65 L85 135 Q55 125 20 140 Z" fill="#3e2723" />
+                <path d="M38 65 L65 65 L68 135 L35 135 Z" fill="#0d0d0d" />
+                <circle cx="53" cy="48" r="13" fill="#efe5fd" />
+                <path d="M28 45 Q53 35 78 45 L82 50 Q53 42 22 50 Z" fill="#111" />
+            </svg>
+        </div>
+
+        <!-- 優化後的細緻手槍模型 -->
+        <div id="player-gun-container">
+            <div id="muzzle-flash"></div>
+            <svg viewBox="0 0 400 500" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <!-- 金屬深色鋼鐵漸層 -->
+                    <linearGradient id="gunSteel" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" style="stop-color:#1a1a1a;" />
+                        <stop offset="30%" style="stop-color:#444;" />
+                        <stop offset="50%" style="stop-color:#2a2a2a;" />
+                        <stop offset="80%" style="stop-color:#555;" />
+                        <stop offset="100%" style="stop-color:#111;" />
+                    </linearGradient>
+                    <!-- 胡桃木握把漸層 -->
+                    <linearGradient id="walnutGrip" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" style="stop-color:#5d4037;" />
+                        <stop offset="50%" style="stop-color:#3e2723;" />
+                        <stop offset="100%" style="stop-color:#211411;" />
+                    </linearGradient>
+                    <!-- 金屬磨損紋理遮罩 (概念性) -->
+                    <filter id="grain">
+                        <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" result="noise" />
+                        <feComposite operator="in" in="noise" in2="SourceGraphic" />
+                    </filter>
+                </defs>
+                
+                <!-- 握把與後部框架 (帶有雕刻細節感) -->
+                <path d="M120 480 L280 480 L270 320 Q265 280 200 280 Q135 280 130 320 Z" fill="url(#walnutGrip)" />
+                <path d="M140 480 L260 480 L260 460 L140 460 Z" fill="#c5a059" opacity="0.6" /> <!-- 底部金屬飾條 -->
+                
+                <!-- 框架主體 -->
+                <path d="M130 330 L270 330 L260 250 L140 250 Z" fill="#222" stroke="#000" stroke-width="1" />
+                
+                <!-- 彈巢 (Cylinder) 頂部透視 -->
+                <rect x="145" y="240" width="110" height="95" rx="15" fill="url(#gunSteel)" stroke="#111" />
+                <!-- 彈巢溝槽線條 (細節) -->
+                <line x1="165" y1="240" x2="165" y2="335" stroke="#000" stroke-width="2" />
+                <line x1="200" y1="240" x2="200" y2="335" stroke="#111" stroke-width="3" />
+                <line x1="235" y1="240" x2="235" y2="335" stroke="#000" stroke-width="2" />
+                
+                <!-- 槍管 (Barrel) 縮進 -->
+                <path d="M170 250 L230 250 L220 70 L180 70 Z" fill="url(#gunSteel)" />
+                <!-- 卸殼桿 (Ejector Rod Housing) -->
+                <path d="M218 250 L230 250 L225 90 L220 90 Z" fill="#1a1a1a" />
+                
+                <!-- 瞄準肋條與照門細節 -->
+                <path d="M194 250 L206 250 L203 70 L197 70 Z" fill="#111" /> <!-- 頂部平面 -->
+                <path d="M188 255 L212 255 L212 245 L204 250 L196 250 L188 245 Z" fill="#000" /> <!-- 後照門 V 型 -->
+                
+                <!-- 準星 (Front Sight) - 更加銳利 -->
+                <rect x="197" y="65" width="6" height="12" fill="#000" />
+                
+                <!-- 擊錘 (Hammer) 細節 -->
+                <g id="hammer-fps" style="transition: transform 0.1s;">
+                    <path d="M185 340 Q200 390 215 340 L205 310 L195 310 Z" fill="#222" stroke="#000" />
+                    <rect x="192" y="340" width="16" height="5" fill="#444" /> <!-- 擊錘防滑紋路 -->
+                </g>
+
+                <!-- 玩家手部陰影模糊 -->
+                <path d="M20 500 L140 450 Q200 500 380 500" fill="none" stroke="rgba(40, 25, 20, 0.4)" stroke-width="100" stroke-linecap="round" />
+            </svg>
+        </div>
+
+        <div id="crosshair"></div>
+        <div id="blood-splatter"></div>
+
+        <div id="message-overlay">
+            <h1 class="western-font text-7xl text-red-700 mb-2 font-black italic">RED DEAD</h1>
+            <h2 class="western-font text-xl mb-12 tracking-[0.5em] text-gray-500">西部法外之徒</h2>
+            <div class="bg-black/80 p-8 border-y border-red-900/20 text-center mb-10 max-w-lg">
+                <p id="game-status" class="text-md text-gray-400 leading-relaxed italic">
+                    縮小的武器模型提供更廣的視野。<br>
+                    按住 <span class="text-white font-bold">空白鍵</span> 感受精確的瞄準線。<br>
+                    放開按鍵，讓正義執行。
+                </p>
+            </div>
+            <button id="start-btn" class="btn western-font font-bold">開始對決</button>
+        </div>
+    </div>
+
+    <script>
+        const gameContainer = document.getElementById('game-container');
+        const crosshair = document.getElementById('crosshair');
+        const enemy = document.getElementById('enemy');
+        const gunContainer = document.getElementById('player-gun-container');
+        const flash = document.getElementById('muzzle-flash');
+        const hammer = document.getElementById('hammer-fps');
+        const scoreEl = document.getElementById('score');
+        const energyBar = document.getElementById('energy-bar');
+        const overlay = document.getElementById('message-overlay');
+        const startBtn = document.getElementById('start-btn');
+        const blood = document.getElementById('blood-splatter');
+        const statusText = document.getElementById('game-status');
+
+        let score = 0;
+        let isDeadEye = false;
+        let energy = 100;
+        let gameActive = false;
+        let enemyTimeout;
+
+        const moveCrosshair = (x, y) => {
+            crosshair.style.left = `${x - 20}px`;
+            crosshair.style.top = `${y - 20}px`;
+            
+            // 降低晃動係數使瞄準更穩定
+            const rotateX = (y - window.innerHeight / 2) * 0.015;
+            const rotateY = (x - window.innerWidth / 2) * 0.015;
+            
+            if (document.body.classList.contains('gun-drawn')) {
+                gunContainer.style.transform = `translate(-42%, 0px) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
+            }
+        };
+
+        document.addEventListener('mousemove', (e) => moveCrosshair(e.clientX, e.clientY));
+
+        const startDeadEye = () => {
+            if (!gameActive || energy < 15) return;
+            isDeadEye = true;
+            document.body.classList.add('dead-eye-active', 'gun-drawn');
+            hammer.style.transform = 'translateY(15px) rotateX(10deg)'; // 擊錘後扳動畫
+        };
+
+        const shoot = () => {
+            if (!gameActive || !isDeadEye) return;
+            
+            isDeadEye = false;
+            document.body.classList.remove('dead-eye-active');
+            hammer.style.transform = 'translateY(0)'; 
+            
+            gunContainer.classList.remove('gun-fire');
+            void gunContainer.offsetWidth; 
+            gunContainer.classList.add('gun-fire');
+            flash.style.display = 'block';
+            setTimeout(() => flash.style.display = 'none', 60);
+
+            const cx = parseInt(crosshair.style.left) + 20;
+            const cy = parseInt(crosshair.style.top) + 20;
+            const enemyRect = enemy.getBoundingClientRect();
+
+            if (cx >= enemyRect.left + 15 && cx <= enemyRect.right - 15 &&
+                cy >= enemyRect.top + 5 && cy <= enemyRect.bottom - 5) {
+                hitEnemy();
+            } else {
+                gameOver("你的子彈沒入塵土，荒野不留無名之輩。");
+            }
+            
+            setTimeout(() => {
+                if (gameActive) document.body.classList.remove('gun-drawn');
+            }, 600);
+        };
+
+        window.addEventListener('keydown', (e) => { if (e.code === 'Space') startDeadEye(); });
+        window.addEventListener('keyup', (e) => { if (e.code === 'Space') shoot(); });
+        gameContainer.addEventListener('mousedown', startDeadEye);
+        gameContainer.addEventListener('mouseup', shoot);
+
+        function hitEnemy() {
+            score += 100;
+            scoreEl.innerText = score;
+            blood.style.display = 'block';
+            enemy.classList.remove('drawing-weapon');
+            enemy.style.opacity = '0';
+            enemy.style.transform = 'translateY(220px) scale(0.6)';
+            clearTimeout(enemyTimeout);
+            
+            setTimeout(() => {
+                blood.style.display = 'none';
+                spawnEnemy();
+            }, 1000);
+        }
+
+        function spawnEnemy() {
+            const x = Math.random() * (window.innerWidth - 300) + 150;
+            const y = Math.random() * (window.innerHeight - 450) + 200;
+            
+            enemy.style.left = `${x - 65}px`;
+            enemy.style.top = `${y - 130}px`;
+            enemy.style.opacity = '1';
+            enemy.style.transform = 'translateY(0) scale(1)';
+            
+            const difficultyDecay = Math.min(3500, score * 4);
+            const totalTime = Math.max(850, 4800 - difficultyDecay); 
+            
+            setTimeout(() => {
+                if (gameActive) enemy.classList.add('drawing-weapon');
+            }, totalTime * 0.7);
+
+            enemyTimeout = setTimeout(() => {
+                if (gameActive) gameOver("他比你更早看到了地獄的火光。");
+            }, totalTime);
+        }
+
+        function gameOver(msg) {
+            gameActive = false;
+            isDeadEye = false;
+            document.body.classList.remove('dead-eye-active', 'gun-drawn');
+            clearTimeout(enemyTimeout);
+            enemy.classList.remove('drawing-weapon');
+            
+            statusText.innerHTML = `<span class="text-red-700 text-6xl font-black western-font">DEAD</span><br><br><span class="text-white opacity-90">${msg}</span><br><br><span class="text-stone-500">賞金積分: ${score}</span>`;
+            overlay.style.display = 'flex';
+        }
+
+        function startGame() {
+            score = 0;
+            energy = 100;
+            scoreEl.innerText = '0';
+            energyBar.style.width = '100%';
+            gameActive = true;
+            overlay.style.display = 'none';
+            spawnEnemy();
+        }
+
+        startBtn.addEventListener('click', startGame);
+
+        setInterval(() => {
+            if (isDeadEye && gameActive) {
+                energy -= 2.0;
+                if (energy <= 0) { energy = 0; shoot(); }
+            } else if (energy < 100 && gameActive) {
+                energy += 0.4;
+            }
+            energyBar.style.width = `${energy}%`;
+        }, 30);
+    </script>
+</body>
+</html>

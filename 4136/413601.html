@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>第五人格 Emoji版 1V4</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #1a202c;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none; /* 防止手機端滑動螢幕 */
+            overflow: hidden;
+        }
+        
+        #game-board {
+            display: grid;
+            grid-template-columns: repeat(15, 1fr);
+            grid-template-rows: repeat(15, 1fr);
+            gap: 2px;
+            background-color: #2d3748;
+            padding: 4px;
+            border-radius: 8px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            width: 100%;
+            max-width: 500px;
+            aspect-ratio: 1 / 1;
+            margin: 0 auto;
+        }
+
+        .cell {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: clamp(1rem, 5vw, 1.8rem); /* 響應式 Emoji 大小 */
+            background-color: #4a5568;
+            border-radius: 4px;
+            user-select: none;
+        }
+
+        /* 特殊地形顏色 */
+        .cell-wall { background-color: #2d3748; }
+        .cell-floor { background-color: #4a5568; }
+
+        /* 虛擬搖桿樣式 */
+        .d-pad-btn {
+            background-color: #4a5568;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            active: background-color: #718096;
+            user-select: none;
+        }
+        .d-pad-btn:active {
+            background-color: #718096;
+            transform: scale(0.95);
+        }
+
+        /* 模態框動畫 */
+        .modal-enter {
+            animation: fadeIn 0.3s ease-out forwards;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.9); }
+            to { opacity: 1; transform: scale(1); }
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen relative">
+
+    <!-- 主選單 -->
+    <div id="main-menu" class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-gray-900 bg-opacity-95 modal-enter">
+        <h1 class="text-4xl md:text-6xl font-bold mb-4 text-center">
+            <span class="text-red-500">👹</span> 狩獵與逃生 <span class="text-blue-400">🏃</span>
+        </h1>
+        <p class="text-gray-400 mb-8 text-center px-4">1V4 非對稱競技 Emoji 版</p>
+        
+        <div class="bg-gray-800 p-6 rounded-xl shadow-lg w-11/12 max-w-md text-center border border-gray-700">
+            <h2 class="text-2xl font-bold mb-4 text-white">選擇你的陣營</h2>
+            
+            <button onclick="startGame('survivor')" class="w-full mb-4 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                <span>🏃</span> 扮演求生者 (逃生)
+            </button>
+            <p class="text-sm text-gray-400 mb-6 text-left">
+                目標：與 AI 隊友 🤖 合作，破譯 4 台密碼機 📠，並從大門 🚪 逃脫。躲避監管者 👹！
+            </p>
+
+            <button onclick="startGame('hunter')" class="w-full mb-4 bg-red-700 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                <span>👹</span> 扮演監管者 (狩獵)
+            </button>
+            <p class="text-sm text-gray-400 mb-2 text-left">
+                目標：在求生者 🏃🤖 逃跑前，抓捕(觸碰)至少 3 名求生者。
+            </p>
+        </div>
+    </div>
+
+    <!-- 遊戲介面 -->
+    <div id="game-ui" class="hidden flex-col items-center w-full px-2 max-w-lg">
+        <!-- 頂部狀態列 -->
+        <div class="w-full flex justify-between items-center mb-2 px-2 bg-gray-800 p-3 rounded-lg border border-gray-700">
+            <div class="flex flex-col">
+                <span id="role-display" class="font-bold text-lg"></span>
+                <span id="status-msg" class="text-sm text-gray-400">遊戲開始！</span>
+            </div>
+            <div class="text-right">
+                <div class="font-bold text-blue-400">📠 進度: <span id="cipher-count">0/4</span></div>
+                <div class="font-bold text-red-400">🏃 存活: <span id="alive-count">4/4</span></div>
+            </div>
+        </div>
+
+        <!-- 遊戲棋盤 -->
+        <div id="game-board"></div>
+
+        <!-- 手機虛擬按鍵 (僅在觸控裝置或小螢幕顯示) -->
+        <div class="mt-4 grid grid-cols-3 gap-2 w-48 h-48 sm:w-40 sm:h-40">
+            <div></div>
+            <div class="d-pad-btn" ontouchstart="handleTouchMove(0, -1)" onmousedown="handleTouchMove(0, -1)">⬆️</div>
+            <div></div>
+            <div class="d-pad-btn" ontouchstart="handleTouchMove(-1, 0)" onmousedown="handleTouchMove(-1, 0)">⬅️</div>
+            <div class="d-pad-btn" ontouchstart="handleTouchMove(0, 1)" onmousedown="handleTouchMove(0, 1)">⬇️</div>
+            <div class="d-pad-btn" ontouchstart="handleTouchMove(1, 0)" onmousedown="handleTouchMove(1, 0)">➡️</div>
+        </div>
+        <p class="text-xs text-gray-500 mt-2 text-center">電腦版請使用 WASD 或 方向鍵移動</p>
+    </div>
+
+    <!-- 遊戲結束模態框 -->
+    <div id="game-over" class="hidden absolute inset-0 z-50 flex flex-col items-center justify-center bg-gray-900 bg-opacity-95">
+        <h1 id="go-title" class="text-5xl font-bold mb-4 text-center"></h1>
+        <p id="go-desc" class="text-xl text-gray-300 mb-8 text-center px-4"></p>
+        <button onclick="returnToMenu()" class="bg-white text-gray-900 font-bold py-3 px-8 rounded-lg hover:bg-gray-200 transition-colors">
+            返回主選單
+        </button>
+    </div>
+
+    <script>
+        // 遊戲設定與常數
+        const BOARD_SIZE = 15;
+        const EMOJIS = {
+            wall: '🧱',
+            floor: '',
+            playerSurvivor: '🏃',
+            aiSurvivor: '🤖',
+            hunterPlayer: '👹',
+            hunterAI: '👹',
+            machineUnfinished: '📠',
+            machineFinished: '✨',
+            gateClosed: '🚪',
+            gateOpen: '🌌',
+            dead: '🪦',
+            injured: '🤕',
+            downed: '🧎'
+        };
+
+        // 地圖配置 (1=牆壁, 0=空地, M=密碼機, E=大門)
+        const MAP_LAYOUT = [
+            "1111111E1111111",
+            "100000000000001",
+            "101101111101101",
+            "101M0000000M101",
+            "101011101110101",
+            "100010000010001",
+            "111010111010111",
+            "100000000000001",
+            "101110111011101",
+            "101000M00000101",
+            "101101101101101",
+            "100000000000M01",
+            "111101111101111",
+            "100000000000001",
+            "111111111111111",
+        ];
+
+        // 遊戲狀態
+        let gameState = {
+            role: 'survivor', // 'survivor' or 'hunter'
+            board: [],
+            entities: [],
+            machines: [],
+            gate: { x: 7, y: 0, open: false },
+            decodedCount: 0,
+            requiredDecodes: 4,
+            aliveCount: 4,
+            escapedCount: 0,
+            deadCount: 0,
+            isPlaying: false,
+            tickInterval: null
+        };
+
+        // DOM 元素
+        const boardEl = document.getElementById('game-board');
+        const mainMenuEl = document.getElementById('main-menu');
+        const gameUiEl = document.getElementById('game-ui');
+        const gameOverEl = document.getElementById('game-over');
+
+        // --- 初始化與重置 ---
+
+        function startGame(role) {
+            gameState.role = role;
+            mainMenuEl.classList.add('hidden');
+            gameUiEl.classList.remove('hidden');
+            gameUiEl.classList.add('flex');
+            
+            document.getElementById('role-display').innerHTML = role === 'survivor' ? 
+                '<span class="text-blue-400">🏃 求生者陣營</span>' : 
+                '<span class="text-red-400">👹 監管者陣營</span>';
+            
+            initGame();
+        }
+
+        function returnToMenu() {
+            gameOverEl.classList.add('hidden');
+            gameUiEl.classList.add('hidden');
+            gameUiEl.classList.remove('flex');
+            mainMenuEl.classList.remove('hidden');
+            clearInterval(gameState.tickInterval);
+        }
+
+        function initGame() {
+            // 解析地圖
+            gameState.board = [];
+            gameState.machines = [];
+            gameState.entities = [];
+            gameState.decodedCount = 0;
+            gameState.gate.open = false;
+            gameState.escapedCount = 0;
+            gameState.deadCount = 0;
+            gameState.aliveCount = 4;
+            gameState.isPlaying = true;
+
+            let spawnPoints = []; // 收集空地作為出生點
+
+            for (let y = 0; y < BOARD_SIZE; y++) {
+                let row = [];
+                for (let x = 0; x < BOARD_SIZE; x++) {
+                    const char = MAP_LAYOUT[y][x];
+                    if (char === '1') row.push(1); // 牆
+                    else {
+                        row.push(0); // 空地
+                        if (char === 'M') {
+                            gameState.machines.push({ x, y, progress: 0, decoded: false });
+                        } else if (char === 'E') {
+                            gameState.gate = { x, y, open: false };
+                        } else if (y > 1 && y < BOARD_SIZE - 2) {
+                            spawnPoints.push({x, y});
+                        }
+                    }
+                }
+                gameState.board.push(row);
+            }
+
+            // 隨機打亂出生點
+            spawnPoints.sort(() => Math.random() - 0.5);
+
+            // 分配角色
+            if (gameState.role === 'survivor') {
+                // 玩家是求生者
+                gameState.entities.push({ id: 'p1', type: 'player', role: 'survivor', x: spawnPoints[0].x, y: spawnPoints[0].y, alive: true, escaped: false, state: 'healthy', downCount: 0, invincibleTicks: 0, stunTicks: 0, rescueProgress: 0 });
+                gameState.entities.push({ id: 'a1', type: 'ai', role: 'survivor', x: spawnPoints[1].x, y: spawnPoints[1].y, alive: true, escaped: false, state: 'healthy', downCount: 0, invincibleTicks: 0, stunTicks: 0, rescueProgress: 0 });
+                gameState.entities.push({ id: 'a2', type: 'ai', role: 'survivor', x: spawnPoints[2].x, y: spawnPoints[2].y, alive: true, escaped: false, state: 'healthy', downCount: 0, invincibleTicks: 0, stunTicks: 0, rescueProgress: 0 });
+                gameState.entities.push({ id: 'a3', type: 'ai', role: 'survivor', x: spawnPoints[3].x, y: spawnPoints[3].y, alive: true, escaped: false, state: 'healthy', downCount: 0, invincibleTicks: 0, stunTicks: 0, rescueProgress: 0 });
+                // 監管者生在遠處
+                gameState.entities.push({ id: 'h1', type: 'ai', role: 'hunter', x: spawnPoints[spawnPoints.length-1].x, y: spawnPoints[spawnPoints.length-1].y, alive: true, stunTicks: 0 });
+            } else {
+                // 玩家是監管者
+                gameState.entities.push({ id: 'p1', type: 'player', role: 'hunter', x: spawnPoints[spawnPoints.length-1].x, y: spawnPoints[spawnPoints.length-1].y, alive: true, stunTicks: 0 });
+                gameState.entities.push({ id: 'a1', type: 'ai', role: 'survivor', x: spawnPoints[0].x, y: spawnPoints[0].y, alive: true, escaped: false, state: 'healthy', downCount: 0, invincibleTicks: 0, stunTicks: 0, rescueProgress: 0 });
+                gameState.entities.push({ id: 'a2', type: 'ai', role: 'survivor', x: spawnPoints[1].x, y: spawnPoints[1].y, alive: true, escaped: false, state: 'healthy', downCount: 0, invincibleTicks: 0, stunTicks: 0, rescueProgress: 0 });
+                gameState.entities.push({ id: 'a3', type: 'ai', role: 'survivor', x: spawnPoints[2].x, y: spawnPoints[2].y, alive: true, escaped: false, state: 'healthy', downCount: 0, invincibleTicks: 0, stunTicks: 0, rescueProgress: 0 });
+                gameState.entities.push({ id: 'a4', type: 'ai', role: 'survivor', x: spawnPoints[3].x, y: spawnPoints[3].y, alive: true, escaped: false, state: 'healthy', downCount: 0, invincibleTicks: 0, stunTicks: 0, rescueProgress: 0 });
+            }
+
+            createBoardDOM();
+            updateUI();
+            
+            // 開始遊戲循環
+            clearInterval(gameState.tickInterval);
+            gameState.tickInterval = setInterval(gameTick, 400); // 每 400ms 一個回合
+        }
+
+        // --- 繪製與 UI ---
+
+        function createBoardDOM() {
+            boardEl.innerHTML = '';
+            for (let y = 0; y < BOARD_SIZE; y++) {
+                for (let x = 0; x < BOARD_SIZE; x++) {
+                    const cell = document.createElement('div');
+                    cell.id = `cell-${x}-${y}`;
+                    cell.className = 'cell cell-floor';
+                    if (gameState.board[y][x] === 1) {
+                        cell.className = 'cell cell-wall';
+                        cell.innerText = EMOJIS.wall;
+                    }
+                    boardEl.appendChild(cell);
+                }
+            }
+        }
+
+        function getEntityAt(x, y) {
+            return gameState.entities.find(e => e.x === x && e.y === y && e.alive && !e.escaped);
+        }
+
+        function drawBoard() {
+            // 清理地板
+            for (let y = 0; y < BOARD_SIZE; y++) {
+                for (let x = 0; x < BOARD_SIZE; x++) {
+                    if (gameState.board[y][x] === 1) continue;
+                    const cell = document.getElementById(`cell-${x}-${y}`);
+                    cell.innerText = EMOJIS.floor;
+                    
+                    // 畫大門
+                    if (x === gameState.gate.x && y === gameState.gate.y) {
+                        cell.innerText = gameState.gate.open ? EMOJIS.gateOpen : EMOJIS.gateClosed;
+                    }
+                    
+                    // 畫密碼機
+                    const machine = gameState.machines.find(m => m.x === x && m.y === y);
+                    if (machine) {
+                        cell.innerText = machine.decoded ? EMOJIS.machineFinished : EMOJIS.machineUnfinished;
+                    }
+
+                    // 畫死掉的求生者
+                    const deadBody = gameState.entities.find(e => e.x === x && e.y === y && !e.alive && !e.escaped && e.role === 'survivor');
+                    if (deadBody) {
+                        cell.innerText = EMOJIS.dead;
+                    }
+                }
+            }
+
+            // 畫活著的實體
+            gameState.entities.forEach(ent => {
+                if (!ent.alive || ent.escaped) return;
+                const cell = document.getElementById(`cell-${ent.x}-${ent.y}`);
+                if (cell) {
+                    if (ent.role === 'hunter') {
+                        cell.innerText = ent.type === 'player' ? EMOJIS.hunterPlayer : EMOJIS.hunterAI;
+                        if (ent.stunTicks > 0) cell.style.opacity = '0.5'; // 擦刀半透明特效
+                        else cell.style.opacity = '1';
+                    }
+                    else if (ent.role === 'survivor') {
+                        if (ent.state === 'downed') cell.innerText = EMOJIS.downed;
+                        else if (ent.state === 'injured') cell.innerText = EMOJIS.injured;
+                        else cell.innerText = ent.type === 'player' ? EMOJIS.playerSurvivor : EMOJIS.aiSurvivor;
+                        
+                        if (ent.invincibleTicks > 0) cell.style.transform = 'scale(1.3)'; // 受擊加速放大特效
+                        else cell.style.transform = 'scale(1)';
+                    }
+                }
+            });
+        }
+
+        function updateUI() {
+            document.getElementById('cipher-count').innerText = `${gameState.decodedCount}/${gameState.requiredDecodes}`;
+            document.getElementById('alive-count').innerText = `${gameState.aliveCount}/4`;
+            
+            if (gameState.gate.open) {
+                document.getElementById('status-msg').innerText = "大門已開啟，快逃！";
+                document.getElementById('status-msg').className = "text-sm text-green-400 font-bold";
+            } else {
+                document.getElementById('status-msg').innerText = "破譯密碼機中...";
+                document.getElementById('status-msg').className = "text-sm text-gray-400";
+            }
+        }
+
+        // --- 核心邏輯 ---
+
+        function gameTick() {
+            if (!gameState.isPlaying) return;
+
+            // 更新狀態倒數 (擦刀、無敵)
+            gameState.entities.forEach(ent => {
+                if (ent.stunTicks > 0) ent.stunTicks--;
+                if (ent.invincibleTicks > 0) ent.invincibleTicks--;
+            });
+
+            processAI();
+            processDecoding();
+            processRescue();
+            checkCollisions();
+            drawBoard();
+            checkWinCondition();
+        }
+
+        // 玩家輸入處理
+        document.addEventListener('keydown', (e) => {
+            if (!gameState.isPlaying) return;
+            
+            let dx = 0, dy = 0;
+            switch(e.key.toLowerCase()) {
+                case 'w': case 'arrowup': dy = -1; break;
+                case 's': case 'arrowdown': dy = 1; break;
+                case 'a': case 'arrowleft': dx = -1; break;
+                case 'd': case 'arrowright': dx = 1; break;
+                default: return; // 忽略其他按鍵
+            }
+            
+            movePlayer(dx, dy);
+        });
+
+        function handleTouchMove(dx, dy) {
+            if (!gameState.isPlaying) return;
+            movePlayer(dx, dy);
+        }
+
+        function movePlayer(dx, dy) {
+            const player = gameState.entities.find(e => e.type === 'player');
+            if (!player || !player.alive || player.escaped) return;
+
+            // 倒地或擦刀中無法移動
+            if (player.state === 'downed' || player.stunTicks > 0) return;
+
+            const nx = player.x + dx;
+            const ny = player.y + dy;
+
+            // 邊界與牆壁檢查
+            if (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE && gameState.board[ny][nx] !== 1) {
+                // 檢查是否是求生者走到大門
+                if (player.role === 'survivor' && nx === gameState.gate.x && ny === gameState.gate.y) {
+                    if (gameState.gate.open) {
+                        player.escaped = true;
+                        gameState.escapedCount++;
+                        gameState.aliveCount--;
+                        checkWinCondition();
+                    }
+                    return; // 門沒開不能踩上去
+                }
+                
+                // 移動
+                player.x = nx;
+                player.y = ny;
+                checkCollisions();
+                drawBoard();
+            }
+        }
+
+        // --- AI 邏輯與尋路 ---
+
+        function processAI() {
+            const hunter = gameState.entities.find(e => e.role === 'hunter');
+            const survivors = gameState.entities.filter(e => e.role === 'survivor' && e.alive && !e.escaped);
+
+            // AI 求生者邏輯
+            gameState.entities.forEach(ent => {
+                if (ent.type === 'ai' && ent.role === 'survivor' && ent.alive && !ent.escaped) {
+                    if (ent.state === 'downed' || ent.stunTicks > 0) return; // 倒地不移動
+
+                    // 1. 檢查是否離監管者太近 (逃跑邏輯)
+                    const distToHunter = Math.abs(ent.x - hunter.x) + Math.abs(ent.y - hunter.y);
+                    if (distToHunter < 5 && hunter.stunTicks <= 0) {
+                        // 往反方向跑
+                        let dx = Math.sign(ent.x - hunter.x);
+                        let dy = Math.sign(ent.y - hunter.y);
+                        // 如果在同一軸上，隨便給個側向偏移
+                        if (dx === 0) dx = Math.random() > 0.5 ? 1 : -1;
+                        if (dy === 0) dy = Math.random() > 0.5 ? 1 : -1;
+                        
+                        // 受擊加速：如果有無敵狀態，可以跑兩格
+                        let moves = ent.invincibleTicks > 0 ? 2 : 1;
+                        for(let i=0; i<moves; i++) {
+                            tryMoveAI(ent, dx, 0) || tryMoveAI(ent, 0, dy) || tryMoveAI(ent, -dx, 0) || tryMoveAI(ent, 0, -dy);
+                        }
+                    } else {
+                        // 1.5 優先尋找倒地隊友救援
+                        let downedTeammate = survivors.find(s => s.state === 'downed');
+                        let target = null;
+
+                        if (downedTeammate) {
+                            target = downedTeammate;
+                        } 
+                        // 2. 尋找未破譯的密碼機或大門
+                        else if (gameState.gate.open) {
+                            target = gameState.gate; // 門開了去門
+                        } else {
+                            // 找最近的未破譯密碼機
+                            let unDecoded = gameState.machines.filter(m => !m.decoded);
+                            if (unDecoded.length > 0) {
+                                unDecoded.sort((a, b) => {
+                                    return (Math.abs(ent.x - a.x) + Math.abs(ent.y - a.y)) - 
+                                           (Math.abs(ent.x - b.x) + Math.abs(ent.y - b.y));
+                                });
+                                target = unDecoded[0];
+                            }
+                        }
+
+                        if (target) {
+                            // 如果在旁邊，不移動 (解碼中或救援中)
+                            const distToTarget = Math.abs(ent.x - target.x) + Math.abs(ent.y - target.y);
+                            if (distToTarget > 1 || (target === gameState.gate && gameState.gate.open && distToTarget > 0)) {
+                                const path = findPath(ent.x, ent.y, target.x, target.y);
+                                if (path && path.length > 0) {
+                                    const nextStep = path[0];
+                                    
+                                    // 檢查大門邏輯 (不能踩在關閉的門上)
+                                    if (nextStep.x === gameState.gate.x && nextStep.y === gameState.gate.y) {
+                                        if (gameState.gate.open) {
+                                            ent.escaped = true;
+                                            gameState.escapedCount++;
+                                            gameState.aliveCount--;
+                                        }
+                                    } else {
+                                        ent.x = nextStep.x;
+                                        ent.y = nextStep.y;
+                                        // 受擊加速狀態跑更快
+                                        if (ent.invincibleTicks > 0 && path.length > 1) {
+                                            ent.x = path[1].x;
+                                            ent.y = path[1].y;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            // AI 監管者邏輯
+            if (hunter.type === 'ai' && hunter.alive) {
+                if (hunter.stunTicks > 0) return; // 擦刀中不動
+
+                // 只追擊沒倒地的求生者
+                let activeSurvivors = survivors.filter(s => s.state !== 'downed');
+                if (activeSurvivors.length > 0) {
+                    // 找最近的求生者
+                    activeSurvivors.sort((a, b) => {
+                        return (Math.abs(hunter.x - a.x) + Math.abs(hunter.y - a.y)) - 
+                               (Math.abs(hunter.x - b.x) + Math.abs(hunter.y - b.y));
+                    });
+                    const target = activeSurvivors[0];
+                    const path = findPath(hunter.x, hunter.y, target.x, target.y);
+                    
+                    if (path && path.length > 0) {
+                        hunter.x = path[0].x;
+                        hunter.y = path[0].y;
+                    }
+                }
+            }
+        }
+
+        function tryMoveAI(ent, dx, dy) {
+            const nx = ent.x + dx;
+            const ny = ent.y + dy;
+            if (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE && gameState.board[ny][nx] !== 1) {
+                // 不能踩在門上
+                if (nx === gameState.gate.x && ny === gameState.gate.y) return false;
+                ent.x = nx;
+                ent.y = ny;
+                return true;
+            }
+            return false;
+        }
+
+        // BFS 簡單尋路
+        function findPath(sx, sy, tx, ty) {
+            let queue = [{x: sx, y: sy, path: []}];
+            let visited = new Set();
+            visited.add(`${sx},${sy}`);
+            let dirs = [[0,1], [1,0], [0,-1], [-1,0]];
+
+            while(queue.length > 0) {
+                let curr = queue.shift();
+                
+                if(curr.x === tx && curr.y === ty) return curr.path;
+
+                for(let d of dirs) {
+                    let nx = curr.x + d[0];
+                    let ny = curr.y + d[1];
+                    
+                    if(nx>=0 && nx<BOARD_SIZE && ny>=0 && ny<BOARD_SIZE && gameState.board[ny][nx] !== 1) {
+                        const key = `${nx},${ny}`;
+                        if(!visited.has(key)) {
+                            visited.add(key);
+                            queue.push({x: nx, y: ny, path: [...curr.path, {x: nx, y: ny}]});
+                        }
+                    }
+                }
+            }
+            return null; // 找不到路徑
+        }
+
+        // --- 互動與判定 ---
+
+        function processRescue() {
+            const survivors = gameState.entities.filter(e => e.role === 'survivor' && e.alive && !e.escaped);
+            const activeSurvivors = survivors.filter(e => e.state === 'healthy' || e.state === 'injured');
+            
+            survivors.forEach(downed => {
+                if (downed.state !== 'downed') return;
+
+                // 檢查是否有健康的求生者在旁邊
+                let isBeingRescued = false;
+                for (let rescuer of activeSurvivors) {
+                    const dist = Math.abs(rescuer.x - downed.x) + Math.abs(rescuer.y - downed.y);
+                    if (dist <= 1) {
+                        isBeingRescued = true;
+                        break;
+                    }
+                }
+
+                if (isBeingRescued) {
+                    downed.rescueProgress += 20; // 約 5 個 tick 就能摸起來
+                    if (downed.rescueProgress >= 100) {
+                        downed.state = 'injured'; // 摸起來是受傷狀態
+                        downed.invincibleTicks = 4; // 給點短暫無敵防剛摸起被秒殺
+                    }
+                } else {
+                    // 沒人摸進度倒退
+                    if (downed.rescueProgress > 0) downed.rescueProgress -= 5;
+                }
+            });
+        }
+
+        function processDecoding() {
+            const survivors = gameState.entities.filter(e => e.role === 'survivor' && e.alive && !e.escaped);
+            const activeSurvivors = survivors.filter(e => e.state === 'healthy' || e.state === 'injured'); // 倒地不能修機
+            
+            gameState.machines.forEach(machine => {
+                if (machine.decoded) return;
+
+                // 檢查是否有求生者在旁邊
+                let isBeingDecoded = false;
+                for (let s of activeSurvivors) {
+                    const dist = Math.abs(s.x - machine.x) + Math.abs(s.y - machine.y);
+                    if (dist <= 1) {
+                        isBeingDecoded = true;
+                        break;
+                    }
+                }
+
+                if (isBeingDecoded) {
+                    machine.progress += 10; // 每個 tick 增加 10%
+                    if (machine.progress >= 100) {
+                        machine.decoded = true;
+                        gameState.decodedCount++;
+                        
+                        // 檢查是否所有密碼機都解開了
+                        if (gameState.decodedCount >= gameState.requiredDecodes && !gameState.gate.open) {
+                            gameState.gate.open = true;
+                        }
+                    }
+                }
+            });
+            updateUI();
+        }
+
+        function checkCollisions() {
+            const hunter = gameState.entities.find(e => e.role === 'hunter');
+            const survivors = gameState.entities.filter(e => e.role === 'survivor' && e.alive && !e.escaped);
+
+            survivors.forEach(s => {
+                // 必須是監管者沒在擦刀，且求生者不在無敵狀態，且求生者還沒倒地
+                if (s.x === hunter.x && s.y === hunter.y && s.state !== 'downed' && hunter.stunTicks <= 0 && s.invincibleTicks <= 0) {
+                    
+                    if (s.state === 'healthy') {
+                        // 第一下：半血、受擊加速、監管者擦刀
+                        s.state = 'injured';
+                        s.invincibleTicks = 8; // 受擊加速無敵時間
+                        hunter.stunTicks = 5;  // 監管者擦刀停頓
+                    } else if (s.state === 'injured') {
+                        // 第二下：倒地
+                        s.downCount++;
+                        hunter.stunTicks = 5;  // 監管者擦刀停頓
+                        
+                        if (s.downCount >= 3) {
+                            // 總共倒三次，直接淘汰
+                            s.state = 'dead';
+                            s.alive = false;
+                            gameState.deadCount++;
+                            gameState.aliveCount--;
+                        } else {
+                            // 倒地狀態，等待救援
+                            s.state = 'downed';
+                            s.rescueProgress = 0;
+                        }
+                    }
+                    updateUI();
+                }
+            });
+        }
+
+        function checkWinCondition() {
+            if (!gameState.isPlaying) return;
+
+            let isGameOver = false;
+            let winTitle = "";
+            let winDesc = "";
+
+            // 判斷條件：
+            const totalSurvivors = 4;
+            
+            // 檢查是否所有場上的求生者都倒地了 (視同全滅)
+            const activeSurvivors = gameState.entities.filter(e => e.role === 'survivor' && !e.escaped && e.alive);
+            const allDowned = activeSurvivors.length > 0 && activeSurvivors.every(e => e.state === 'downed');
+            
+            if (gameState.deadCount >= 3 || (gameState.deadCount + gameState.escapedCount === totalSurvivors && gameState.deadCount >= 2) || allDowned) {
+                isGameOver = true;
+                if (gameState.role === 'hunter') {
+                    winTitle = "<span class='text-green-500'>勝利！大獲全勝</span>";
+                    winDesc = "你成功狩獵了大部分的求生者！👹";
+                } else {
+                    winTitle = "<span class='text-red-500'>失敗！全員迷失</span>";
+                    winDesc = "監管者太強大了，求生者未能逃脫...🪦";
+                }
+            } else if (gameState.escapedCount >= 2 || (gameState.deadCount + gameState.escapedCount === totalSurvivors && gameState.escapedCount > gameState.deadCount)) {
+                isGameOver = true;
+                if (gameState.role === 'survivor') {
+                    winTitle = "<span class='text-green-500'>勝利！成功逃生</span>";
+                    winDesc = "求生者成功破譯密碼機並逃脫！🏃💨";
+                } else {
+                    winTitle = "<span class='text-red-500'>失敗！獵物逃脫</span>";
+                    winDesc = "求生者從大門溜走了...🚪";
+                }
+            }
+
+            // 特殊情況：玩家自己死了 (如果是求生者)
+            const player = gameState.entities.find(e => e.type === 'player');
+            if (player.role === 'survivor' && (!player.alive || player.state === 'dead') && !isGameOver) {
+                // 玩家死了但遊戲還沒結束，讓玩家提早結束或觀戰。這裡簡化為直接 Game Over
+                isGameOver = true;
+                winTitle = "<span class='text-red-500'>你被淘汰了</span>";
+                winDesc = "你被監管者淘汰了！遊戲結束。🪦";
+            }
+
+            if (isGameOver) {
+                gameState.isPlaying = false;
+                clearInterval(gameState.tickInterval);
+                setTimeout(() => {
+                    document.getElementById('go-title').innerHTML = winTitle;
+                    document.getElementById('go-desc').innerHTML = winDesc;
+                    gameOverEl.classList.remove('hidden');
+                    gameOverEl.classList.add('modal-enter');
+                }, 500); // 延遲一下顯示結果
+            }
+        }
+
+    </script>
+</body>
+</html>

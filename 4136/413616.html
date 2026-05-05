@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>動物大戰殭屍 - 厚血加強版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #1a2a1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+            background: #2e7d32; /* 深綠色草地 */
+            border: 8px solid #1b5e20;
+            margin: 0 auto;
+            image-rendering: pixelated;
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+        }
+        #ui-overlay {
+            position: absolute;
+            top: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            pointer-events: none;
+            width: 90%;
+            justify-content: space-between;
+        }
+        .ui-panel {
+            background: rgba(0, 0, 0, 0.75);
+            color: white;
+            padding: 8px 15px;
+            border-radius: 10px;
+            pointer-events: auto;
+            border: 2px solid #ffd700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: bold;
+        }
+        .hearts-container {
+            color: #ff5252;
+            font-size: 20px;
+            letter-spacing: 2px;
+        }
+        .shop-container {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 8px;
+            background: rgba(0,0,0,0.85);
+            padding: 10px;
+            border-radius: 15px;
+            border: 2px solid #ffffff;
+            max-width: 95vw;
+            overflow-x: auto;
+        }
+        .animal-card {
+            width: 75px;
+            height: 95px;
+            background: #333;
+            color: white;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 2px solid transparent;
+            flex-shrink: 0;
+        }
+        .animal-card:hover { transform: translateY(-5px); background: #444; }
+        .animal-card.selected { border-color: #ffeb3b; background: #555; box-shadow: 0 0 10px #ffeb3b; }
+        .animal-card.disabled { opacity: 0.4; cursor: not-allowed; }
+        .cost-tag { font-weight: bold; color: #ffeb3b; font-size: 14px; }
+        .emoji { font-size: 28px; margin-bottom: 2px; }
+        .name-tag { font-size: 11px; color: #ccc; }
+        
+        #game-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.95);
+            color: white;
+            padding: 40px;
+            border-radius: 25px;
+            text-align: center;
+            display: none;
+            z-index: 100;
+            border: 4px solid #ff9800;
+            min-width: 300px;
+        }
+        .btn {
+            background: linear-gradient(180deg, #ffb74d, #f57c00);
+            color: white;
+            border: none;
+            padding: 12px 40px;
+            font-size: 20px;
+            border-radius: 50px;
+            cursor: pointer;
+            margin-top: 20px;
+            font-weight: bold;
+            box-shadow: 0 4px 0 #bf360c;
+        }
+        .btn:active { transform: translateY(2px); box-shadow: 0 2px 0 #bf360c; }
+    </style>
+</head>
+<body>
+
+<div id="ui-overlay">
+    <div class="flex gap-3">
+        <div class="ui-panel">☀️ <span id="sun-count">100</span></div>
+        <div class="ui-panel">🏆 <span id="score-count">0</span></div>
+    </div>
+    <div class="ui-panel">
+        生命: <span id="hearts" class="hearts-container">❤️❤️❤️❤️❤️❤️❤️❤️❤️❤️</span>
+    </div>
+</div>
+
+<div id="game-modal">
+    <h1 id="modal-title" class="text-4xl font-bold mb-4">遊戲結束</h1>
+    <p id="modal-msg" class="text-xl mb-4"></p>
+    <p>最終分數: <span id="final-score">0</span></p>
+    <button class="btn" onclick="location.reload()">重新開始</button>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<div class="shop-container" id="shop">
+    <div class="animal-card" data-type="squirrel" onclick="selectAnimal('squirrel')">
+        <span class="emoji">🐿️</span>
+        <span class="name-tag">松鼠</span>
+        <span class="cost-tag">50</span>
+    </div>
+    <div class="animal-card" data-type="elephant" onclick="selectAnimal('elephant')">
+        <span class="emoji">🐘</span>
+        <span class="name-tag">大象</span>
+        <span class="cost-tag">100</span>
+    </div>
+    <div class="animal-card" data-type="penguin" onclick="selectAnimal('penguin')">
+        <span class="emoji">🐧</span>
+        <span class="name-tag">企鵝</span>
+        <span class="cost-tag">125</span>
+    </div>
+    <div class="animal-card" data-type="giraffe" onclick="selectAnimal('giraffe')">
+        <span class="emoji">🦒</span>
+        <span class="name-tag">長頸鹿</span>
+        <span class="cost-tag">200</span>
+    </div>
+    <div class="animal-card" data-type="hedgehog" onclick="selectAnimal('hedgehog')">
+        <span class="emoji">🦔</span>
+        <span class="name-tag">刺蝟</span>
+        <span class="cost-tag">75</span>
+    </div>
+    <div class="animal-card" data-type="monkey" onclick="selectAnimal('monkey')">
+        <span class="emoji">🐒</span>
+        <span class="name-tag">猴子</span>
+        <span class="cost-tag">150</span>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const sunEl = document.getElementById('sun-count');
+    const scoreEl = document.getElementById('score-count');
+    const heartsEl = document.getElementById('hearts');
+
+    // 遊戲參數
+    const GRID_ROWS = 5;
+    const GRID_COLS = 9;
+    let CELL_WIDTH, CELL_HEIGHT;
+    
+    let sun = 150; // 初始陽光稍微調高
+    let score = 0;
+    let lives = 10;
+    let gameActive = true;
+    let selectedAnimalType = null;
+    
+    const animals = [];
+    const zombies = [];
+    const projectiles = [];
+    const suns = [];
+    
+    // 加強了所有角色的血量 (HP)
+    const ANIMAL_DATA = {
+        squirrel: { emoji: '🐿️', cost: 50, hp: 300, attack: 15, cooldown: 70, type: 'shooter', proj: '🌰' },
+        elephant: { emoji: '🐘', cost: 100, hp: 2000, attack: 0, cooldown: 0, type: 'wall' },
+        penguin: { emoji: '🐧', cost: 125, hp: 450, attack: 8, cooldown: 100, type: 'freezer', proj: '❄️' },
+        giraffe: { emoji: '🦒', cost: 200, hp: 600, attack: 25, cooldown: 180, type: 'piercer', proj: '🎯' },
+        hedgehog: { emoji: '🦔', cost: 75, hp: 500, attack: 2, cooldown: 30, type: 'melee' },
+        monkey: { emoji: '🐒', cost: 150, hp: 400, attack: 10, cooldown: 110, type: 'stunner', proj: '🍌' }
+    };
+
+    function resize() {
+        const maxWidth = window.innerWidth * 0.95;
+        canvas.width = Math.min(maxWidth, 1100);
+        canvas.height = (canvas.width / GRID_COLS) * GRID_ROWS;
+        CELL_WIDTH = canvas.width / GRID_COLS;
+        CELL_HEIGHT = canvas.height / GRID_ROWS;
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    class Animal {
+        constructor(x, y, type) {
+            this.gridX = x;
+            this.gridY = y;
+            this.x = x * CELL_WIDTH;
+            this.y = y * CELL_HEIGHT;
+            this.type = type;
+            this.data = ANIMAL_DATA[type];
+            this.hp = this.data.hp;
+            this.maxHp = this.data.hp;
+            this.timer = 0;
+        }
+
+        draw() {
+            ctx.fillStyle = 'rgba(0,0,0,0.1)';
+            ctx.beginPath();
+            ctx.ellipse(this.x + CELL_WIDTH/2, this.y + CELL_HEIGHT * 0.8, CELL_WIDTH*0.3, CELL_HEIGHT*0.1, 0, 0, Math.PI*2);
+            ctx.fill();
+
+            ctx.font = `${CELL_HEIGHT * 0.65}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(this.data.emoji, this.x + CELL_WIDTH/2, this.y + CELL_HEIGHT/2);
+            
+            // 血條顯示優化
+            const barWidth = CELL_WIDTH * 0.7;
+            const barX = this.x + (CELL_WIDTH - barWidth) / 2;
+            const barY = this.y + 10;
+            
+            ctx.fillStyle = '#333';
+            ctx.fillRect(barX, barY, barWidth, 6);
+            
+            const hpPercent = this.hp / this.maxHp;
+            ctx.fillStyle = hpPercent > 0.5 ? '#4caf50' : (hpPercent > 0.2 ? '#ffeb3b' : '#f44336');
+            ctx.fillRect(barX, barY, barWidth * hpPercent, 6);
+        }
+
+        update() {
+            if (this.type === 'melee') {
+                zombies.forEach(z => {
+                    if (z.y === this.y && Math.abs(z.x - this.x) < CELL_WIDTH * 0.8) {
+                        z.hp -= 0.5;
+                    }
+                });
+            } else if (this.data.proj) {
+                this.timer++;
+                if (this.timer >= this.data.cooldown) {
+                    if (zombies.some(z => z.y === this.y && z.x > this.x)) {
+                        projectiles.push(new Projectile(this.x + CELL_WIDTH * 0.6, this.y + CELL_HEIGHT/2, this.type));
+                        this.timer = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    class Zombie {
+        constructor(y) {
+            this.x = canvas.width;
+            this.y = y * CELL_HEIGHT;
+            this.speed = 0.4 + (Math.random() * 0.4) + (score / 2500);
+            this.hp = 100 + (score / 8);
+            this.maxHp = this.hp;
+            this.damage = 1.2; // 稍微降低殭屍傷害以平衡厚血角色
+            this.isFrozen = false;
+            this.frozenTimer = 0;
+            this.isStunned = false;
+            this.stunTimer = 0;
+            this.type = Math.random() > 0.85 ? 'fast' : 'normal';
+            if (this.type === 'fast') {
+                this.speed *= 1.7;
+                this.hp *= 0.75;
+                this.maxHp = this.hp;
+            }
+        }
+
+        draw() {
+            let emoji = '🧟';
+            if (this.isFrozen) emoji = '🥶';
+            if (this.isStunned) emoji = '😵';
+            if (this.type === 'fast') emoji = '🏃';
+
+            ctx.font = `${CELL_HEIGHT * 0.6}px Arial`;
+            ctx.fillText(emoji, this.x + CELL_WIDTH/2, this.y + CELL_HEIGHT/2);
+            
+            const barWidth = CELL_WIDTH * 0.6;
+            ctx.fillStyle = '#444';
+            ctx.fillRect(this.x + (CELL_WIDTH-barWidth)/2, this.y + 5, barWidth, 4);
+            ctx.fillStyle = this.type === 'fast' ? '#ff9800' : '#f44336';
+            ctx.fillRect(this.x + (CELL_WIDTH-barWidth)/2, this.y + 5, barWidth * (this.hp / this.maxHp), 4);
+        }
+
+        update() {
+            if (this.stunTimer > 0) {
+                this.stunTimer--;
+                this.isStunned = true;
+                return;
+            } else {
+                this.isStunned = false;
+            }
+
+            if (this.isFrozen) {
+                this.frozenTimer--;
+                if (this.frozenTimer <= 0) this.isFrozen = false;
+            }
+
+            let currentSpeed = this.isFrozen ? this.speed * 0.4 : this.speed;
+            
+            let blocked = false;
+            for (let a of animals) {
+                if (a.y === this.y && this.x < a.x + CELL_WIDTH * 0.45 && this.x + CELL_WIDTH > a.x + CELL_WIDTH * 0.45) {
+                    blocked = true;
+                    a.hp -= this.damage;
+                    if (a.hp <= 0) {
+                        animals.splice(animals.indexOf(a), 1);
+                    }
+                    break;
+                }
+            }
+
+            if (!blocked) {
+                this.x -= currentSpeed;
+            }
+
+            if (this.x < -CELL_WIDTH * 0.5) {
+                takeDamage();
+                zombies.splice(zombies.indexOf(this), 1);
+            }
+        }
+    }
+
+    class Projectile {
+        constructor(x, y, parentType) {
+            this.x = x;
+            this.y = y;
+            this.parentType = parentType;
+            this.data = ANIMAL_DATA[parentType];
+            this.speed = 5;
+            this.hitList = []; 
+        }
+
+        draw() {
+            ctx.font = '24px Arial';
+            ctx.fillText(this.data.proj, this.x, this.y);
+        }
+
+        update() {
+            this.x += this.speed;
+            
+            for (let i = zombies.length - 1; i >= 0; i--) {
+                let z = zombies[i];
+                if (!this.hitList.includes(z) && z.y < this.y && z.y + CELL_HEIGHT > this.y && this.x > z.x && this.x < z.x + CELL_WIDTH) {
+                    
+                    z.hp -= this.data.attack;
+                    
+                    if (this.parentType === 'freezer') {
+                        z.isFrozen = true;
+                        z.frozenTimer = 160;
+                    }
+                    if (this.parentType === 'stunner') {
+                        if (Math.random() > 0.35) z.stunTimer = 70;
+                    }
+
+                    if (this.parentType !== 'piercer') {
+                        projectiles.splice(projectiles.indexOf(this), 1);
+                        checkKill(z, i);
+                        return;
+                    } else {
+                        this.hitList.push(z);
+                    }
+                    checkKill(z, i);
+                }
+            }
+
+            if (this.x > canvas.width) {
+                const idx = projectiles.indexOf(this);
+                if (idx > -1) projectiles.splice(idx, 1);
+            }
+        }
+    }
+
+    function checkKill(z, index) {
+        if (z.hp <= 0) {
+            zombies.splice(index, 1);
+            score += 25;
+            scoreEl.innerText = score;
+            if (Math.random() > 0.75) suns.push(new Sun(z.x, z.y));
+        }
+    }
+
+    class Sun {
+        constructor(x = null, y = null) {
+            this.x = x || Math.random() * (canvas.width - 50) + 25;
+            this.y = y || -50;
+            this.targetY = y || Math.random() * (canvas.height - 100) + 50;
+            this.speed = x ? -1.2 : 2;
+            this.life = 550;
+            this.isNatural = x === null;
+        }
+        draw() {
+            ctx.shadowBlur = 12;
+            ctx.shadowColor = 'yellow';
+            ctx.font = '34px Arial';
+            ctx.fillText('☀️', this.x, this.y);
+            ctx.shadowBlur = 0;
+        }
+        update() {
+            if (this.isNatural) {
+                if (this.y < this.targetY) this.y += this.speed;
+            } else {
+                if (this.life > 520) this.y += this.speed;
+            }
+            this.life--;
+        }
+    }
+
+    function takeDamage() {
+        lives--;
+        updateHearts();
+        if (lives <= 0) gameOver();
+    }
+
+    function updateHearts() {
+        let h = "";
+        for(let i=0; i<10; i++) h += i < lives ? "❤️" : "🖤";
+        heartsEl.innerText = h;
+    }
+
+    function gameLoop() {
+        if (!gameActive) return;
+
+        ctx.fillStyle = '#2e7d32';
+        ctx.fillRect(0,0, canvas.width, canvas.height);
+        
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        ctx.lineWidth = 2;
+        for (let i = 0; i <= GRID_ROWS; i++) {
+            ctx.beginPath(); ctx.moveTo(0, i * CELL_HEIGHT); ctx.lineTo(canvas.width, i * CELL_HEIGHT); ctx.stroke();
+        }
+        for (let j = 0; j <= GRID_COLS; j++) {
+            ctx.beginPath(); ctx.moveTo(j * CELL_WIDTH, 0); ctx.lineTo(j * CELL_WIDTH, canvas.height); ctx.stroke();
+        }
+
+        spawnTimer++;
+        if (spawnTimer > Math.max(55, 210 - score/25)) {
+            zombies.push(new Zombie(Math.floor(Math.random() * GRID_ROWS)));
+            spawnTimer = 0;
+        }
+
+        sunTimer++;
+        if (sunTimer > 240) {
+            suns.push(new Sun());
+            sunTimer = 0;
+        }
+
+        [...suns, ...animals, ...zombies, ...projectiles].forEach(obj => {
+            obj.update();
+            obj.draw();
+        });
+
+        for(let i=suns.length-1; i>=0; i--) if(suns[i].life <= 0) suns.splice(i, 1);
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    let spawnTimer = 0;
+    let sunTimer = 0;
+
+    canvas.addEventListener('click', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+        for (let i = suns.length - 1; i >= 0; i--) {
+            const s = suns[i];
+            const dist = Math.hypot(s.x - mouseX, s.y - mouseY);
+            if (dist < 50) {
+                sun += 25;
+                sunEl.innerText = sun;
+                suns.splice(i, 1);
+                return;
+            }
+        }
+
+        if (selectedAnimalType) {
+            const gridX = Math.floor(mouseX / CELL_WIDTH);
+            const gridY = Math.floor(mouseY / CELL_HEIGHT);
+            
+            if (gridX < 0 || gridX >= GRID_COLS || gridY < 0 || gridY >= GRID_ROWS) return;
+
+            const cost = ANIMAL_DATA[selectedAnimalType].cost;
+            const isOccupied = animals.some(a => a.gridX === gridX && a.gridY === gridY);
+            
+            if (!isOccupied && sun >= cost) {
+                animals.push(new Animal(gridX, gridY, selectedAnimalType));
+                sun -= cost;
+                sunEl.innerText = sun;
+            }
+        }
+    });
+
+    function selectAnimal(type) {
+        if (selectedAnimalType === type) {
+            deselectAll();
+        } else {
+            deselectAll();
+            selectedAnimalType = type;
+            const card = document.querySelector(`[data-type="${type}"]`);
+            if (card) card.classList.add('selected');
+        }
+    }
+
+    function deselectAll() {
+        selectedAnimalType = null;
+        document.querySelectorAll('.animal-card').forEach(c => c.classList.remove('selected'));
+    }
+
+    function gameOver() {
+        gameActive = false;
+        document.getElementById('game-modal').style.display = 'block';
+        document.getElementById('final-score').innerText = score;
+        document.getElementById('modal-msg').innerText = "森林失守了，但你的動物們奮戰到了最後！";
+    }
+
+    window.onload = () => {
+        updateHearts();
+        gameLoop();
+    };
+</script>
+</body>
+</html>

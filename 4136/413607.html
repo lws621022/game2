@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>彩色方塊躲避球</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            background: #222;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            cursor: none;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            pointer-events: none;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        #game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.85);
+            padding: 2rem;
+            border-radius: 1rem;
+            text-align: center;
+            color: white;
+            display: none;
+            border: 2px solid #4a90e2;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div class="text-2xl font-bold">分數: <span id="score-val">0</span></div>
+        <div class="text-sm opacity-80">最高紀錄: <span id="high-score">0</span></div>
+    </div>
+
+    <div id="game-over">
+        <h1 class="text-4xl font-black mb-4 text-red-500">遊戲結束!</h1>
+        <p class="text-xl mb-6">最終得分: <span id="final-score">0</span></p>
+        <button onclick="resetGame()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-full transition duration-200">
+            再次挑戰
+        </button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score-val');
+        const highScoreEl = document.getElementById('high-score');
+        const gameOverEl = document.getElementById('game-over');
+        const finalScoreEl = document.getElementById('final-score');
+
+        let score = 0;
+        let highScore = 0;
+        let gameActive = true;
+        let enemies = [];
+        let particles = [];
+        let animationId;
+        let spawnRate = 1000; // 初始敵人產生間隔 (毫秒)
+        let lastSpawnTime = 0;
+
+        const player = {
+            x: 0,
+            y: 0,
+            radius: 15,
+            color: '#4a90e2',
+            trail: []
+        };
+
+        // 初始化畫布大小
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // 滑鼠與觸控監聽
+        function handleMove(e) {
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            player.x = clientX;
+            player.y = clientY;
+        }
+
+        window.addEventListener('mousemove', handleMove);
+        window.addEventListener('touchmove', handleMove);
+
+        class Enemy {
+            constructor() {
+                this.radius = Math.random() * 20 + 10;
+                
+                // 隨機從畫布四個邊緣進入
+                const edge = Math.floor(Math.random() * 4);
+                if (edge === 0) { // Top
+                    this.x = Math.random() * canvas.width;
+                    this.y = -this.radius;
+                } else if (edge === 1) { // Bottom
+                    this.x = Math.random() * canvas.width;
+                    this.y = canvas.height + this.radius;
+                } else if (edge === 2) { // Left
+                    this.x = -this.radius;
+                    this.y = Math.random() * canvas.height;
+                } else { // Right
+                    this.x = canvas.width + this.radius;
+                    this.y = Math.random() * canvas.height;
+                }
+
+                // 速度隨分數增加
+                const speedBoost = Math.min(score / 50, 5);
+                const angle = Math.atan2(player.y - this.y, player.x - this.x);
+                const speed = Math.random() * 2 + 2 + speedBoost;
+                this.vx = Math.cos(angle) * speed;
+                this.vy = Math.sin(angle) * speed;
+                
+                this.color = `hsl(${Math.random() * 360}, 70%, 60%)`;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.closePath();
+            }
+        }
+
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.radius = Math.random() * 3;
+                this.vx = (Math.random() - 0.5) * 10;
+                this.vy = (Math.random() - 0.5) * 10;
+                this.alpha = 1;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.restore();
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.alpha -= 0.02;
+            }
+        }
+
+        function createExplosion(x, y, color) {
+            for (let i = 0; i < 20; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        function spawnEnemy(timestamp) {
+            if (timestamp - lastSpawnTime > spawnRate) {
+                enemies.push(new Enemy());
+                lastSpawnTime = timestamp;
+                // 難度曲線：隨著時間縮短產生間隔
+                spawnRate = Math.max(200, 1000 - (score * 5));
+            }
+        }
+
+        function resetGame() {
+            score = 0;
+            enemies = [];
+            particles = [];
+            gameActive = true;
+            spawnRate = 1000;
+            scoreEl.textContent = '0';
+            gameOverEl.style.display = 'none';
+            requestAnimationFrame(gameLoop);
+        }
+
+        function gameLoop(timestamp) {
+            if (!gameActive) return;
+
+            ctx.fillStyle = 'rgba(26, 26, 26, 0.2)'; // 殘影效果
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 更新與繪製粒子
+            particles = particles.filter(p => p.alpha > 0);
+            particles.forEach(p => {
+                p.update();
+                p.draw();
+            });
+
+            // 更新與繪製玩家
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fillStyle = player.color;
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = player.color;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.closePath();
+
+            // 更新與繪製敵人
+            spawnEnemy(timestamp);
+            
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const e = enemies[i];
+                e.update();
+                e.draw();
+
+                // 碰撞檢測 (玩家與敵人)
+                const dist = Math.hypot(player.x - e.x, player.y - e.y);
+                if (dist < player.radius + e.radius) {
+                    endGame();
+                }
+
+                // 移除超出螢幕太遠的敵人並加分
+                if (e.x < -100 || e.x > canvas.width + 100 || e.y < -100 || e.y > canvas.height + 100) {
+                    enemies.splice(i, 1);
+                    score++;
+                    scoreEl.textContent = score;
+                }
+            }
+
+            animationId = requestAnimationFrame(gameLoop);
+        }
+
+        function endGame() {
+            gameActive = false;
+            createExplosion(player.x, player.y, player.color);
+            cancelAnimationFrame(animationId);
+            
+            if (score > highScore) {
+                highScore = score;
+                highScoreEl.textContent = highScore;
+            }
+
+            finalScoreEl.textContent = score;
+            gameOverEl.style.display = 'block';
+        }
+
+        // 點擊開始
+        window.onload = () => {
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            requestAnimationFrame(gameLoop);
+        };
+    </script>
+</body>
+</html>
