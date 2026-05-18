@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>轉珠戰鬥遊戲 - 極致順暢版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --water: #3b82f6;
+            --fire: #ef4444;
+            --wood: #22c55e;
+            --light: #eab308;
+            --dark: #a855f7;
+            --heart: #ec4899;
+        }
+        body {
+            background: #0a0a0a;
+            color: white;
+            font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+        }
+        #game-container {
+            user-select: none;
+        }
+        .orb {
+            transition: transform 0.1s ease-out, filter 0.2s, opacity 0.2s;
+            cursor: grab;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.25rem;
+            border-radius: 0.75rem;
+            border: 1px solid rgba(255,255,255,0.05);
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.3);
+            position: relative;
+        }
+        .orb.dragging {
+            z-index: 50;
+            cursor: grabbing;
+            opacity: 0.95;
+            transform: scale(1.25);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5), 0 0 20px rgba(255,255,255,0.3);
+            filter: brightness(1.1);
+        }
+        .hp-bar-inner {
+            transition: width 0.4s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+        }
+        .damage-popup {
+            pointer-events: none;
+            position: absolute;
+            font-weight: 900;
+            font-style: italic;
+            z-index: 100;
+            animation: floatUp 0.8s ease-out forwards;
+            text-shadow: 2px 2px 0px #000;
+        }
+        @keyframes floatUp {
+            0% { transform: translate(-50%, 0); opacity: 1; }
+            100% { transform: translate(-50%, -80px); opacity: 0; }
+        }
+        .attack-particle {
+            position: absolute;
+            background: #ff3333;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 100;
+            box-shadow: 0 0 10px #ff0000;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center h-screen overflow-hidden">
+
+    <div id="game-container" class="relative flex flex-col items-center w-full max-w-md bg-zinc-950 shadow-2xl h-full max-h-[900px] overflow-hidden p-4">
+        
+        <!-- 敵人區域 -->
+        <div class="relative w-full h-56 flex flex-col items-center justify-center mb-6 bg-gradient-to-b from-zinc-900 to-black rounded-2xl border border-zinc-800 shadow-2xl">
+            <div id="enemy-cd" class="absolute top-4 left-4 bg-red-700 border-2 border-zinc-300 text-white font-black px-3 py-1 rounded-lg text-sm shadow-lg">CD 3</div>
+            <div id="enemy-sprite" class="text-8xl mb-4 drop-shadow-[0_20px_20px_rgba(0,0,0,0.8)]">🐉</div>
+            <div class="w-3/4 h-5 bg-zinc-900 rounded-full overflow-hidden border-2 border-zinc-700 relative">
+                <div id="enemy-hp-bar" class="hp-bar-inner h-full bg-gradient-to-r from-red-600 to-orange-500 w-full"></div>
+            </div>
+            <div id="enemy-hp-text" class="text-sm font-bold mt-2 text-zinc-400">100,000 / 100,000</div>
+        </div>
+
+        <!-- 玩家狀態 -->
+        <div class="w-full px-2 mb-4">
+            <div class="flex justify-between items-end mb-2">
+                <div id="combo-display" class="text-4xl font-black text-yellow-400 italic drop-shadow-md">0 Combo</div>
+                <div id="timer-display" class="text-2xl font-mono font-bold text-blue-400">10.0s</div>
+            </div>
+            <div class="w-full h-6 bg-zinc-900 rounded-lg overflow-hidden border-2 border-zinc-700 shadow-inner mb-1">
+                <div id="player-hp-bar" class="hp-bar-inner h-full bg-gradient-to-r from-emerald-500 to-green-400 w-full"></div>
+            </div>
+            <div id="player-hp-text" class="text-center text-sm font-black text-zinc-300">10,000 / 10,000</div>
+        </div>
+
+        <!-- 6x5 盤面 -->
+        <div id="board" class="relative grid grid-cols-6 grid-rows-5 gap-1.5 bg-black p-2 rounded-2xl border-4 border-zinc-900 shadow-2xl" 
+             style="width: 100%; aspect-ratio: 6/5;">
+            <!-- 由 JavaScript 動態生成 -->
+        </div>
+
+        <div class="mt-6 text-zinc-600 text-xs font-bold tracking-[0.3em] uppercase opacity-50">Drag Orbs to Battle</div>
+    </div>
+
+    <!-- 結算 -->
+    <div id="overlay" class="fixed inset-0 bg-black/95 hidden flex flex-col items-center justify-center z-[200] backdrop-blur-md">
+        <h1 id="overlay-title" class="text-7xl font-black mb-10 tracking-tighter italic">GAME OVER</h1>
+        <button onclick="location.reload()" class="px-12 py-4 bg-zinc-100 text-black font-black rounded-full hover:bg-white hover:scale-105 active:scale-95 transition-all text-2xl shadow-white/10 shadow-2xl">
+            RETRY
+        </button>
+    </div>
+
+    <script>
+        const COLS = 6;
+        const ROWS = 5;
+        const ORB_TYPES = ['water', 'fire', 'wood', 'light', 'dark', 'heart'];
+        const ORB_EMOJIS = { water: '💧', fire: '🔥', wood: '🌿', light: '✨', dark: '🌙', heart: '❤️' };
+        const ORB_COLORS = { water: '#1e3a8a', fire: '#7f1d1d', wood: '#064e3b', light: '#713f12', dark: '#4c1d95', heart: '#831843' };
+        
+        let playerHp = 10000;
+        let maxPlayerHp = 10000;
+        let enemyHp = 100000;
+        let maxEnemyHp = 100000;
+        let enemyCd = 3;
+        
+        let isMoving = false;
+        let isProcessing = false;
+        let hasMovedInTurn = false;
+        let timeLeft = 10.0;
+        let timerInterval = null;
+        let comboCount = 0;
+        let heartGroupsCount = 0; // 記錄本次移動消除了幾組心符石
+        let draggedOrb = null;
+        let draggedOrbType = null;
+        let board = [];
+
+        const boardEl = document.getElementById('board');
+        const playerHpBar = document.getElementById('player-hp-bar');
+        const enemyHpBar = document.getElementById('enemy-hp-bar');
+        const playerHpText = document.getElementById('player-hp-text');
+        const enemyHpText = document.getElementById('enemy-hp-text');
+        const enemyCdText = document.getElementById('enemy-cd');
+        const timerText = document.getElementById('timer-display');
+        const comboText = document.getElementById('combo-display');
+        const overlay = document.getElementById('overlay');
+
+        function initGame() {
+            createNonMatchingBoard();
+            renderInitialBoard();
+            setupInteractions();
+        }
+
+        function createNonMatchingBoard() {
+            board = [];
+            for (let r = 0; r < ROWS; r++) {
+                board[r] = [];
+                for (let c = 0; c < COLS; c++) {
+                    let possibleTypes = [...ORB_TYPES];
+                    if (c >= 2 && board[r][c-1] === board[r][c-2]) {
+                        const i = possibleTypes.indexOf(board[r][c-1]);
+                        if (i !== -1) possibleTypes.splice(i, 1);
+                    }
+                    if (r >= 2 && board[r-1][c] === board[r-2][c]) {
+                        const i = possibleTypes.indexOf(board[r-1][c]);
+                        if (i !== -1) possibleTypes.splice(i, 1);
+                    }
+                    board[r][c] = possibleTypes[Math.floor(Math.random() * possibleTypes.length)];
+                }
+            }
+        }
+
+        function renderInitialBoard() {
+            boardEl.innerHTML = '';
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    const orb = document.createElement('div');
+                    orb.className = 'orb';
+                    orb.id = `orb-${r}-${c}`;
+                    orb.dataset.row = r;
+                    orb.dataset.col = c;
+                    updateOrbVisual(orb, board[r][c]);
+                    boardEl.appendChild(orb);
+                }
+            }
+        }
+
+        function updateOrbVisual(element, type) {
+            element.style.backgroundColor = ORB_COLORS[type];
+            element.textContent = ORB_EMOJIS[type];
+        }
+
+        function setupInteractions() {
+            const onStart = (e) => {
+                if (isProcessing) return;
+                const point = e.touches ? e.touches[0] : e;
+                const target = document.elementFromPoint(point.clientX, point.clientY);
+                
+                if (target && target.classList.contains('orb')) {
+                    isMoving = true;
+                    hasMovedInTurn = false;
+                    draggedOrb = target;
+                    const r = parseInt(draggedOrb.dataset.row);
+                    const c = parseInt(draggedOrb.dataset.col);
+                    draggedOrbType = board[r][c];
+                    
+                    draggedOrb.classList.add('dragging');
+                    if (e.pointerId) boardEl.setPointerCapture(e.pointerId);
+                }
+            };
+
+            const onMove = (e) => {
+                if (!isMoving || !draggedOrb) return;
+                const point = e.touches ? e.touches[0] : e;
+                const target = document.elementFromPoint(point.clientX, point.clientY);
+                
+                if (target && target.classList.contains('orb') && target !== draggedOrb) {
+                    const r1 = parseInt(draggedOrb.dataset.row);
+                    const c1 = parseInt(draggedOrb.dataset.col);
+                    const r2 = parseInt(target.dataset.row);
+                    const c2 = parseInt(target.dataset.col);
+
+                    if (!hasMovedInTurn) {
+                        hasMovedInTurn = true;
+                        startTimer();
+                    }
+
+                    const targetType = board[r2][c2];
+                    board[r1][c1] = targetType;
+                    board[r2][c2] = draggedOrbType;
+
+                    updateOrbVisual(draggedOrb, targetType); 
+                    updateOrbVisual(target, draggedOrbType); 
+
+                    draggedOrb.classList.remove('dragging');
+                    target.classList.add('dragging');
+                    draggedOrb = target;
+                }
+            };
+
+            const onEnd = (e) => {
+                if (!isMoving) return;
+                isMoving = false;
+                if (draggedOrb) {
+                    draggedOrb.classList.remove('dragging');
+                    if (e.pointerId) boardEl.releasePointerCapture(e.pointerId);
+                }
+                draggedOrb = null;
+                draggedOrbType = null;
+                
+                if (hasMovedInTurn) {
+                    stopTimer();
+                    processMatches();
+                }
+            };
+
+            boardEl.addEventListener('pointerdown', onStart);
+            window.addEventListener('pointermove', onMove);
+            window.addEventListener('pointerup', onEnd);
+            boardEl.addEventListener('contextmenu', e => e.preventDefault());
+        }
+
+        function startTimer() {
+            if (timerInterval) return;
+            timeLeft = 10.0;
+            timerInterval = setInterval(() => {
+                timeLeft -= 0.1;
+                if (timeLeft <= 0) {
+                    timeLeft = 0;
+                    handleTimeout();
+                }
+                timerText.textContent = Math.max(0, timeLeft).toFixed(1) + 's';
+                timerText.style.color = timeLeft < 3 ? '#ef4444' : '#60a5fa';
+            }, 100);
+        }
+
+        function stopTimer() {
+            clearInterval(timerInterval);
+            timerInterval = null;
+            timerText.textContent = "10.0s";
+            timerText.style.color = '#60a5fa';
+        }
+
+        function handleTimeout() {
+            isMoving = false;
+            if (draggedOrb) draggedOrb.classList.remove('dragging');
+            draggedOrb = null;
+            draggedOrbType = null;
+            stopTimer();
+            processMatches();
+        }
+
+        async function processMatches() {
+            isProcessing = true;
+            comboCount = 0;
+            heartGroupsCount = 0;
+            comboText.textContent = "0 Combo";
+
+            let hasMatches = true;
+            while (hasMatches) {
+                const groups = findMatches();
+                if (groups.length > 0) {
+                    for(const group of groups) {
+                        comboCount++;
+                        comboText.textContent = comboCount + " Combo";
+                        
+                        // 檢查這組符石是否為心符石
+                        const firstCell = group[0];
+                        if (board[firstCell.r][firstCell.c] === 'heart') {
+                            heartGroupsCount++;
+                        }
+
+                        await highlightAndRemove([group]);
+                        await dropOrbs();
+                        await fillEmpty();
+                    }
+                    await new Promise(r => setTimeout(r, 100));
+                } else {
+                    hasMatches = false;
+                }
+            }
+            calculateResults();
+        }
+
+        function findMatches() {
+            const comboGroups = [];
+            const rows = board.length;
+            const cols = board[0].length;
+
+            // 水平掃描
+            for (let r = 0; r < rows; r++) {
+                let count = 1;
+                for (let c = 1; c <= cols; c++) {
+                    if (c < cols && board[r][c] === board[r][c-1] && board[r][c] !== null) {
+                        count++;
+                    } else {
+                        if (count >= 3) {
+                            const group = [];
+                            for (let i = 0; i < count; i++) group.push({r, c: c - 1 - i});
+                            comboGroups.push(group);
+                        }
+                        count = 1;
+                    }
+                }
+            }
+            // 垂直掃描
+            for (let c = 0; c < cols; c++) {
+                let count = 1;
+                for (let r = 1; r <= rows; r++) {
+                    if (r < rows && board[r][c] === board[r-1][c] && board[r][c] !== null) {
+                        count++;
+                    } else {
+                        if (count >= 3) {
+                            const group = [];
+                            for (let i = 0; i < count; i++) group.push({r: r - 1 - i, c});
+                            comboGroups.push(group);
+                        }
+                        count = 1;
+                    }
+                }
+            }
+            return comboGroups;
+        }
+
+        async function highlightAndRemove(groups) {
+            for (let i = 0; i < 2; i++) {
+                for (const group of groups) {
+                    for (const cell of group) {
+                        const el = document.getElementById(`orb-${cell.r}-${cell.c}`);
+                        if (el) el.style.filter = 'brightness(2) scale(0.8)';
+                    }
+                }
+                await new Promise(r => setTimeout(r, 60));
+                for (const group of groups) {
+                    for (const cell of group) {
+                        const el = document.getElementById(`orb-${cell.r}-${cell.c}`);
+                        if (el) el.style.filter = 'none';
+                    }
+                }
+                await new Promise(r => setTimeout(r, 60));
+            }
+            for (const group of groups) {
+                for (const cell of group) board[cell.r][cell.c] = null;
+            }
+            renderCurrentBoardState();
+        }
+
+        function renderCurrentBoardState() {
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    const orb = document.getElementById(`orb-${r}-${c}`);
+                    if (board[r][c] === null) {
+                        orb.style.opacity = '0';
+                    } else {
+                        orb.style.opacity = '1';
+                        updateOrbVisual(orb, board[r][c]);
+                    }
+                }
+            }
+        }
+
+        async function dropOrbs() {
+            for (let c = 0; c < COLS; c++) {
+                let emptyRow = ROWS - 1;
+                for (let r = ROWS - 1; r >= 0; r--) {
+                    if (board[r][c] !== null) {
+                        const temp = board[r][c];
+                        board[r][c] = null;
+                        board[emptyRow][c] = temp;
+                        emptyRow--;
+                    }
+                }
+            }
+            renderCurrentBoardState();
+            await new Promise(r => setTimeout(r, 80));
+        }
+
+        async function fillEmpty() {
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    if (board[r][c] === null) {
+                        board[r][c] = ORB_TYPES[Math.floor(Math.random() * ORB_TYPES.length)];
+                    }
+                }
+            }
+            renderCurrentBoardState();
+            await new Promise(r => setTimeout(r, 80));
+        }
+
+        function calculateResults() {
+            // 計算對敵人的傷害
+            if (comboCount > 0) {
+                const baseDmg = 100;
+                const totalDmg = Math.floor(baseDmg + baseDmg * (comboCount - 1) * 0.25);
+                enemyHp -= totalDmg;
+                if (enemyHp < 0) enemyHp = 0;
+                showNumberPopup(totalDmg, 'enemy', '#facc15');
+                
+                // 計算回復力
+                if (heartGroupsCount > 0) {
+                    const baseHeal = 150;
+                    // 回復公式：(基礎 150 * 心符石組數) * (1 + (總 Combo - 1) * 0.25)
+                    const totalHeal = Math.floor((baseHeal * heartGroupsCount) * (1 + (comboCount - 1) * 0.25));
+                    playerHp = Math.min(maxPlayerHp, playerHp + totalHeal);
+                    showNumberPopup(totalHeal, 'player', '#4ade80'); // 顯示綠色回復數字
+                }
+
+                updateUI();
+                if (enemyHp <= 0) { endGame(true); return; }
+            }
+            setTimeout(enemyTurn, 600);
+        }
+
+        function enemyTurn() {
+            enemyCd--;
+            if (enemyCd <= 0) {
+                enemyCd = 3;
+                performEnemyAttack();
+            } else {
+                finishRound();
+            }
+        }
+
+        function finishRound() {
+            updateUI();
+            setTimeout(() => {
+                comboCount = 0;
+                heartGroupsCount = 0;
+                comboText.textContent = "0 Combo";
+                isProcessing = false;
+            }, 300);
+        }
+
+        function performEnemyAttack() {
+            const damage = 1500;
+            playerHp -= damage;
+            if (playerHp < 0) playerHp = 0;
+            const sprite = document.getElementById('enemy-sprite');
+            const spriteRect = sprite.getBoundingClientRect();
+            const hpBarRect = playerHpBar.getBoundingClientRect();
+            for (let i = 0; i < 8; i++) {
+                setTimeout(() => {
+                    createAttackParticle(
+                        spriteRect.left + spriteRect.width / 2,
+                        spriteRect.top + spriteRect.height / 2,
+                        hpBarRect.left + hpBarRect.width / 2,
+                        hpBarRect.top + hpBarRect.height / 2
+                    );
+                }, i * 50);
+            }
+            setTimeout(() => {
+                showNumberPopup(damage, 'player', '#ff4d4d');
+                updateUI();
+                if (playerHp <= 0) endGame(false);
+                else finishRound();
+            }, 600);
+        }
+
+        function createAttackParticle(sx, sy, tx, ty) {
+            const p = document.createElement('div');
+            p.className = 'attack-particle w-4 h-4';
+            p.style.left = sx + 'px'; p.style.top = sy + 'px';
+            document.body.appendChild(p);
+            const anim = p.animate([
+                { left: sx + 'px', top: sy + 'px', transform: 'scale(1)', opacity: 1 },
+                { left: tx + 'px', top: ty + 'px', transform: 'scale(0.5)', opacity: 0.8 }
+            ], { duration: 600, easing: 'ease-in' });
+            anim.onfinish = () => {
+                p.remove();
+                playerHpBar.parentElement.style.transform = 'translateX(3px)';
+                setTimeout(() => playerHpBar.parentElement.style.transform = 'translateX(-3px)', 40);
+                setTimeout(() => playerHpBar.parentElement.style.transform = 'translateX(0)', 80);
+            };
+        }
+
+        // 統一的數字顯示函式 (傷害與回復)
+        function showNumberPopup(amt, target, color) {
+            const popup = document.createElement('div');
+            popup.className = 'damage-popup text-4xl';
+            popup.textContent = (color === '#4ade80' ? '+' : '-') + amt.toLocaleString();
+            popup.style.color = color;
+            popup.style.top = target === 'enemy' ? '25%' : '60%';
+            popup.style.left = '50%';
+            document.body.appendChild(popup);
+            setTimeout(() => popup.remove(), 800);
+        }
+
+        function updateUI() {
+            enemyHpBar.style.width = (enemyHp / maxEnemyHp) * 100 + '%';
+            enemyHpText.textContent = `${enemyHp.toLocaleString()} / ${maxEnemyHp.toLocaleString()}`;
+            enemyCdText.textContent = `CD ${enemyCd}`;
+            const php = (playerHp / maxPlayerHp) * 100;
+            playerHpBar.style.width = php + '%';
+            playerHpText.textContent = `${playerHp.toLocaleString()} / ${maxPlayerHp.toLocaleString()}`;
+            
+            // 根據血量比例切換顏色（低血量變紅）
+            if (php < 30) {
+                playerHpBar.style.background = 'linear-gradient(to right, #dc2626, #f87171)';
+            } else {
+                playerHpBar.style.background = 'linear-gradient(to right, #10b981, #34d399)';
+            }
+        }
+
+        function endGame(win) {
+            overlay.classList.remove('hidden');
+            const title = document.getElementById('overlay-title');
+            title.textContent = win ? "VICTORY" : "DEFEAT";
+            title.style.color = win ? "#4ade80" : "#ef4444";
+        }
+
+        window.onload = initGame;
+    </script>
+</body>
+</html>

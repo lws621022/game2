@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>戰艦射擊遊戲 - 殲星艦降臨</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #020617; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        #game-container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        canvas { display: block; box-shadow: 0 0 50px rgba(30, 64, 175, 0.4); }
+        .ui-layer { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; text-shadow: 0 2px 10px rgba(0,0,0,0.9); z-index: 40; }
+        .game-screen { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(2, 6, 23, 0.95); padding: 3rem; border-radius: 2rem; text-align: center; color: white; border: 1px solid #3b82f6; display: none; min-width: 350px; z-index: 100; backdrop-filter: blur(10px); }
+        
+        #dialogue-box { 
+            position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%); 
+            width: 85%; max-width: 900px; background: rgba(15, 23, 42, 0.9); 
+            border-left: 5px solid #3b82f6; padding: 25px; display: none; z-index: 200; 
+            backdrop-filter: blur(8px); animation: slideIn 0.5s ease-out; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        @keyframes slideIn { from { opacity: 0; transform: translate(-50%, 30px); } to { opacity: 1; transform: translate(-50%, 0); } }
+        .speaker-boss { color: #ef4444 !important; border-color: #ef4444 !important; }
+        .speaker-ally { color: #60a5fa !important; }
+        .dialogue-speaker { font-weight: 900; font-size: 1.3rem; margin-bottom: 8px; font-style: italic; letter-spacing: 2px; }
+        .dialogue-text { color: white; font-size: 1.2rem; line-height: 1.6; letter-spacing: 1.5px; font-weight: 500; }
+
+        .skill-container { position: absolute; bottom: 30px; left: 20px; display: flex; gap: 15px; pointer-events: auto; z-index: 40; }
+        .skill-slot { width: 60px; height: 60px; background: rgba(15, 23, 42, 0.8); border: 2px solid #3b82f6; border-radius: 12px; position: relative; cursor: pointer; overflow: hidden; display: flex; justify-content: center; align-items: center; transition: all 0.2s; }
+        .skill-slot:hover { transform: scale(1.1); border-color: #60a5fa; }
+        .skill-cooldown { position: absolute; bottom: 0; left: 0; width: 100%; background: rgba(59, 130, 246, 0.5); }
+        .skill-key { position: absolute; top: -10px; right: -5px; background: #3b82f6; color: white; font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
+        .skill-icon { font-size: 24px; z-index: 2; }
+        .skill-ready { box-shadow: 0 0 15px #3b82f6; border-color: #60a5fa; }
+
+        #boss-ui { position: absolute; top: 20px; right: 20px; width: 350px; display: none; background: rgba(0,0,0,0.6); padding: 15px; border-radius: 12px; z-index: 50; border: 1px solid rgba(239, 68, 68, 0.3); }
+        .hp-bar-bg { width: 100%; height: 14px; background: #1e293b; border-radius: 7px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.2); }
+        #boss-hp-fill { width: 100%; height: 100%; background: linear-gradient(90deg, #dc2626, #f87171, #dc2626); transition: width 0.3s; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    
+    <div class="ui-layer">
+        <div class="text-3xl font-black mb-1 tracking-tighter italic">戰艦裝甲: <span id="lives-display">❤️❤️❤️❤️</span></div>
+        <div class="text-xl font-mono text-blue-400">系統評分: <span id="score-display">0</span> / 2000</div>
+    </div>
+    
+    <div class="skill-container">
+        <div id="skill-repair" class="skill-slot skill-ready" onclick="useRepairSkill()">
+            <div class="skill-key">E</div>
+            <div class="skill-icon">🛠️</div>
+            <div id="repair-cooldown-overlay" class="skill-cooldown" style="height: 0%;"></div>
+        </div>
+    </div>
+
+    <div id="dialogue-box">
+        <div id="dialogue-speaker" class="dialogue-speaker"></div>
+        <div id="dialogue-content" class="dialogue-text"></div>
+    </div>
+
+    <div id="boss-ui">
+        <div id="boss-name" class="text-right text-red-500 font-black mb-1 italic uppercase text-sm tracking-widest">STAR DESTROYER - 殲星艦</div>
+        <div class="hp-bar-bg"><div id="boss-hp-fill"></div></div>
+    </div>
+
+    <div id="game-over-screen" class="game-screen">
+        <h1 class="text-6xl font-black mb-4 text-red-600 italic">訊號中斷</h1>
+        <button onclick="resetGame()" class="bg-red-600 hover:bg-red-700 px-10 py-4 rounded-lg font-black text-white">重新部署</button>
+    </div>
+
+    <div id="win-screen" class="game-screen">
+        <h1 class="text-6xl font-black mb-4 text-blue-400 italic">任務完成</h1>
+        <button onclick="resetGame()" class="bg-blue-600 hover:bg-blue-700 px-10 py-4 rounded-lg font-black text-white">返回基地</button>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const livesDisplay = document.getElementById('lives-display');
+    const scoreDisplay = document.getElementById('score-display');
+    const bossUI = document.getElementById('boss-ui');
+    const bossHPFill = document.getElementById('boss-hp-fill');
+    const repairOverlay = document.getElementById('repair-cooldown-overlay');
+    const repairSlot = document.getElementById('skill-repair');
+    const dialogueBox = document.getElementById('dialogue-box');
+    const dialogueSpeaker = document.getElementById('dialogue-speaker');
+    const dialogueContent = document.getElementById('dialogue-content');
+
+    let score = 0, lives = 4, gameActive = true, bossActive = false, inStory = false;
+    let keys = {}, isMouseDown = false, lastPlayerShot = 0;
+    const FIRE_INTERVAL = 85;
+    const BOSS_TRIGGER_SCORE = 2000;
+
+    const repairSkill = { cooldown: 10000, lastUsed: 0, isReady: true };
+
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.addEventListener('resize', resize); resize();
+
+    const player = { x: 100, y: canvas.height / 2, width: 70, height: 45, speed: 9, color: '#3b82f6', enginePulse: 0 };
+    let missiles = [], enemyMissiles = [], enemies = [], particles = [], lasers = [];
+    
+    const boss = { 
+        x: -2000, y: 0, width: 450, height: 180, 
+        hp: 150, maxHp: 150, speed: 2.0, direction: 1, 
+        active: false, phase: 1, isInvulnerable: true, 
+        lastShot: 0, lastHomingShot: 0, 
+        wingPulse: 0,
+        funnels: [
+            { x: 0, y: 0, angle: 0, state: 'charge', timer: 0, laserActive: false },
+            { x: 0, y: 0, angle: 0, state: 'charge', timer: 0, laserActive: false }
+        ]
+    };
+
+    window.addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'KeyE') useRepairSkill(); });
+    window.addEventListener('keyup', e => keys[e.code] = false);
+    window.addEventListener('mousedown', e => { if (e.button === 0) isMouseDown = true; });
+    window.addEventListener('mouseup', e => { if (e.button === 0) isMouseDown = false; });
+
+    function useRepairSkill() {
+        if (!gameActive || !repairSkill.isReady) return;
+        lives = 4; livesDisplay.innerText = '❤️'.repeat(lives);
+        createExplosion(player.x + player.width/2, player.y + player.height/2, '#4ade80', 40, 8);
+        repairSkill.isReady = false; repairSkill.lastUsed = Date.now();
+        repairSlot.classList.remove('skill-ready');
+        setTimeout(() => { repairSkill.isReady = true; repairSlot.classList.add('skill-ready'); repairOverlay.style.height = '0%'; }, repairSkill.cooldown);
+    }
+
+    function createExplosion(x, y, color, count = 20, size = 5) {
+        for (let i = 0; i < count; i++) particles.push({ x, y, vx: (Math.random() - 0.5) * 12, vy: (Math.random() - 0.5) * 12, radius: Math.random() * size, life: 1, color });
+    }
+
+    function startBossSequence() {
+        if (inStory) return;
+        inStory = true;
+        dialogueBox.style.display = 'block';
+        dialogueSpeaker.className = 'dialogue-speaker speaker-ally';
+        dialogueSpeaker.innerText = "母艦:";
+        dialogueContent.innerText = "警告：偵測到超大規模熱源反應。這不是普通的敵軍... 是帝國的殲星級戰艦！";
+        boss.active = true;
+        boss.x = canvas.width + 800;
+        boss.y = canvas.height/2 - boss.height/2;
+        setTimeout(() => {
+            if (!gameActive) return;
+            dialogueSpeaker.innerText = "戰機:";
+            dialogueContent.innerText = "這種規模... 簡直像是一座移動的要塞。我會嘗試鎖定它的能量核心！";
+            setTimeout(() => {
+                if (!gameActive) return;
+                dialogueBox.style.display = 'none';
+                triggerBossActual();
+            }, 6000);
+        }, 7000);
+    }
+
+    function triggerBossActual() {
+        bossActive = true;
+        bossUI.style.display = 'block';
+        setTimeout(() => {
+            if (!gameActive) return;
+            dialogueBox.style.display = 'block';
+            dialogueBox.style.borderLeftColor = '#ef4444';
+            dialogueSpeaker.className = 'dialogue-speaker speaker-boss';
+            dialogueSpeaker.innerText = "殲星艦:";
+            dialogueContent.innerText = "這裡是帝國第十三艦隊旗艦。反抗軍戰機，你的掙扎到此為止了。";
+            setTimeout(() => {
+                if (!gameActive) return;
+                dialogueContent.innerText = "部署外部浮游雷射。";
+                setTimeout(() => dialogueBox.style.display = 'none', 6000);
+            }, 7000);
+        }, 1000);
+    }
+
+    function update() {
+        if (!gameActive) return;
+        if (!repairSkill.isReady) { 
+            const elapsed = Date.now() - repairSkill.lastUsed; 
+            repairOverlay.style.height = Math.max(0, 100 - (elapsed / repairSkill.cooldown * 100)) + '%'; 
+        }
+
+        if ((keys['ArrowUp'] || keys['KeyW']) && player.y > 0) player.y -= player.speed;
+        if ((keys['ArrowDown'] || keys['KeyS']) && player.y < canvas.height - player.height) player.y += player.speed;
+        if ((keys['ArrowLeft'] || keys['KeyA']) && player.x > 0) player.x -= player.speed;
+        if ((keys['ArrowRight'] || keys['KeyD']) && player.x < canvas.width / 2 - player.width) player.x += player.speed;
+        
+        player.enginePulse = (Math.sin(Date.now() / 50) + 1) / 2;
+
+        if (keys['Space'] || isMouseDown) { 
+            const now = Date.now(); 
+            if (now - lastPlayerShot > FIRE_INTERVAL) { 
+                missiles.push({ x: player.x + player.width - 10, y: player.y + player.height/2 - 2, width: 30, height: 6, speed: 22, color: '#fbbf24' }); 
+                lastPlayerShot = now; 
+            } 
+        }
+
+        if (!bossActive && !inStory && score >= BOSS_TRIGGER_SCORE) startBossSequence();
+
+        if (boss.active) {
+            boss.wingPulse = Math.sin(Date.now() / 300) * 0.1;
+            if (boss.x > canvas.width - boss.width - 50) {
+                boss.x -= 2.5; 
+            } else if (!inStory || bossActive) {
+                boss.isInvulnerable = false;
+                boss.y += boss.speed * boss.direction;
+                if (boss.y <= 100 || boss.y >= canvas.height - boss.height - 100) boss.direction *= -1;
+                
+                const now = Date.now();
+                if (now - boss.lastShot > (boss.phase === 1 ? 800 : 500)) {
+                    createEnemyMissile(boss.x + 50, boss.y + 40, -12, 0, '#ef4444', false);
+                    createEnemyMissile(boss.x + 50, boss.y + boss.height - 40, -12, 0, '#ef4444', false);
+                    if (boss.phase === 2) createEnemyMissile(boss.x, boss.y + boss.height/2, -14, 0, '#f87171', false);
+                    boss.lastShot = now;
+                }
+                if (now - boss.lastHomingShot > 3500) {
+                    createEnemyMissile(boss.x + 100, boss.y + boss.height/2, -4, 0, '#a855f7', true);
+                    boss.lastHomingShot = now;
+                }
+
+                if (boss.phase === 1) updateFunnels();
+            }
+        }
+        updateEntities();
+    }
+
+    function updateFunnels() {
+        const now = Date.now();
+        boss.funnels.forEach((f, i) => {
+            f.x = canvas.width - 100;
+            f.y = (i === 0) ? 100 : canvas.height - 100;
+            f.timer += 16.6; 
+            if (f.timer < 2000) {
+                f.state = 'charge';
+                const dx = player.x + player.width/2 - f.x;
+                const dy = player.y + player.height/2 - f.y;
+                f.angle = Math.atan2(dy, dx);
+            } else if (f.timer < 3000) {
+                f.state = 'lock';
+            } else if (f.timer < 3500) {
+                f.state = 'fire';
+                f.laserActive = true;
+                checkLaserCollision(f);
+            } else {
+                f.timer = 0; f.laserActive = false;
+            }
+        });
+    }
+
+    function checkLaserCollision(f) {
+        const px = player.x + player.width/2;
+        const py = player.y + player.height/2;
+        const A = Math.sin(f.angle);
+        const B = -Math.cos(f.angle);
+        const C = f.y * Math.cos(f.angle) - f.x * Math.sin(f.angle);
+        const dist = Math.abs(A * px + B * py + C) / Math.sqrt(A*A + B*B);
+        const dotProduct = (px - f.x) * Math.cos(f.angle) + (py - f.y) * Math.sin(f.angle);
+        
+        if (dist < 12 && dotProduct > 0) {
+            handlePlayerHit();
+        }
+    }
+
+    function createEnemyMissile(x, y, vx, vy, color, homing) {
+        enemyMissiles.push({ x, y, vx, vy, width: homing ? 20 : 35, height: homing ? 20 : 8, color, homing, angle: Math.PI });
+    }
+
+    function updateEntities() {
+        if (!bossActive && !inStory && Math.random() < 0.02) {
+            const isElite = Math.random() < 0.3;
+            enemies.push({ 
+                x: canvas.width + 100, y: Math.random() * (canvas.height - 60), 
+                width: isElite ? 60 : 50, height: isElite ? 50 : 40, 
+                speed: (isElite ? 3.5 : 5) + (score/2000), color: isElite ? '#3b82f6' : '#f43f5e', 
+                hp: isElite ? 2 : 1, isElite: isElite, lastShot: Date.now()
+            });
+        }
+
+        enemies.forEach((e, i) => { 
+            e.x -= e.speed; 
+            const now = Date.now();
+            if (now - e.lastShot > 1500) {
+                if (e.isElite) createEnemyMissile(e.x, e.y + e.height/2, -6, 0, '#a855f7', true);
+                else createEnemyMissile(e.x, e.y + e.height/2, -9, 0, '#ef4444', false);
+                e.lastShot = now;
+            }
+            if (player.x < e.x + e.width && player.x + player.width > e.x && player.y < e.y + e.height && player.y + player.height > e.y) {
+                handlePlayerHit(); enemies.splice(i, 1);
+            }
+            if (e.x < -100) enemies.splice(i, 1);
+        });
+
+        for (let i = missiles.length - 1; i >= 0; i--) {
+            let m = missiles[i]; m.x += m.speed;
+            if (boss.active && !boss.isInvulnerable && m.x > boss.x && m.x < boss.x + boss.width && m.y > boss.y && m.y < boss.y + boss.height) {
+                boss.hp--;
+                bossHPFill.style.width = (boss.hp / boss.maxHp * 100) + '%';
+                missiles.splice(i, 1);
+                if (boss.hp <= 0) {
+                    if (boss.phase === 1) {
+                        boss.phase = 2; boss.hp = 200; boss.maxHp = 200;
+                        createExplosion(boss.x + 200, boss.y + 90, '#ef4444', 60);
+                        dialogueBox.style.display = 'block';
+                        dialogueSpeaker.className = 'dialogue-speaker speaker-boss';
+                        dialogueSpeaker.innerText = "殲星艦:";
+                        dialogueContent.innerText = "浮游砲損壞... 轉換核心輸出，全武裝飽和攻擊！";
+                        setTimeout(() => dialogueBox.style.display = 'none', 4000);
+                    } else {
+                        gameActive = false; document.getElementById('win-screen').style.display = 'block';
+                    }
+                }
+                continue;
+            }
+            enemies.forEach((e, ei) => {
+                if (m && m.x < e.x + e.width && m.x + m.width > e.x && m.y < e.y + e.height && m.y + m.height > e.y) {
+                    e.hp--; missiles.splice(i, 1);
+                    if (e.hp <= 0) {
+                        createExplosion(e.x, e.y, e.color, 15);
+                        score += e.isElite ? 300 : 100; scoreDisplay.innerText = score;
+                        enemies.splice(ei, 1);
+                    }
+                }
+            });
+            if (m && m.x > canvas.width) missiles.splice(i, 1);
+        }
+
+        for (let i = enemyMissiles.length - 1; i >= 0; i--) {
+            let em = enemyMissiles[i];
+            
+            // 檢查是否超出螢幕
+            const isOutOfScreen = (em.x < -em.width || em.x > canvas.width || em.y < -em.height || em.y > canvas.height);
+
+            if (em.homing && !isOutOfScreen) {
+                // 追蹤邏輯：計算與玩家的角度差
+                const dx = player.x + player.width/2 - em.x;
+                const dy = player.y + player.height/2 - em.y;
+                const angleToPlayer = Math.atan2(dy, dx);
+                let diff = angleToPlayer - em.angle;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                
+                em.angle += diff * 0.025; 
+                em.x += Math.cos(em.angle) * 6; 
+                em.y += Math.sin(em.angle) * 6;
+            } else {
+                // 螢幕外或普通彈頭只走直線
+                if (em.homing) {
+                    // 螢幕外的追蹤彈，沿最後角度飛出
+                    em.x += Math.cos(em.angle) * 6;
+                    em.y += Math.sin(em.angle) * 6;
+                } else {
+                    em.x += em.vx; em.y += em.vy;
+                }
+            }
+
+            // 碰撞檢測
+            if (em.x < player.x + player.width && em.x + em.width > player.x && em.y < player.y + player.height && em.y + player.height > player.y) {
+                handlePlayerHit(); enemyMissiles.splice(i, 1); continue;
+            }
+            
+            // 刪除邏輯：如果超出螢幕較遠則刪除 (緩衝距離避免剛出邊緣就消失)
+            const padding = 50;
+            if (em.x < -padding || em.x > canvas.width + padding || em.y < -padding || em.y > canvas.height + padding) {
+                enemyMissiles.splice(i, 1);
+            }
+        }
+        particles.forEach((p, i) => { p.x += p.vx; p.y += p.vy; p.life -= 0.02; if (p.life <= 0) particles.splice(i, 1); });
+    }
+
+    function handlePlayerHit() {
+        lives--; livesDisplay.innerText = '❤️'.repeat(Math.max(0, lives));
+        createExplosion(player.x, player.y, '#ff4444', 30);
+        if (lives <= 0) { gameActive = false; document.getElementById('game-over-screen').style.display = 'block'; }
+    }
+
+    function drawPlayerShip(ctx, x, y, w, h) {
+        ctx.save(); ctx.translate(x, y);
+        const flare = 20 + player.enginePulse * 15;
+        const grad = ctx.createLinearGradient(-flare, h/2, 10, h/2);
+        grad.addColorStop(0, 'transparent'); grad.addColorStop(1, '#60a5fa');
+        ctx.fillStyle = grad; ctx.beginPath(); ctx.moveTo(10, h * 0.3); ctx.lineTo(-flare, h/2); ctx.lineTo(10, h * 0.7); ctx.fill();
+        ctx.fillStyle = '#3b82f6'; ctx.shadowBlur = 15; ctx.shadowColor = '#3b82f6';
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(w, h * 0.5); ctx.lineTo(0, h); ctx.lineTo(w * 0.3, h * 0.5); ctx.closePath(); ctx.fill();
+        ctx.restore();
+    }
+
+    function drawEnemy(ctx, e) {
+        ctx.save(); ctx.translate(e.x, e.y);
+        ctx.fillStyle = e.color; ctx.shadowBlur = 15; ctx.shadowColor = e.color;
+        ctx.beginPath(); ctx.moveTo(0, e.height/2); ctx.lineTo(e.width, 0); ctx.lineTo(e.width * 0.8, e.height/2); ctx.lineTo(e.width, e.height); ctx.closePath(); ctx.fill();
+        ctx.restore();
+    }
+
+    function drawBossStarDestroyer(ctx, x, y, w, h, phase, invulnerable) {
+        ctx.save(); ctx.translate(x, y);
+        if (invulnerable) ctx.globalAlpha = 0.6;
+        const energyColor = phase === 1 ? '#ef4444' : '#a855f7';
+        ctx.shadowBlur = 40; ctx.shadowColor = energyColor;
+        ctx.fillStyle = '#1e293b'; 
+        ctx.beginPath(); ctx.moveTo(w, h/2); ctx.lineTo(w * 0.7, 0); ctx.lineTo(w * 0.2, h * 0.1); ctx.lineTo(0, h/2); ctx.lineTo(w * 0.2, h * 0.9); ctx.lineTo(w * 0.7, h); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = energyColor; ctx.beginPath(); ctx.arc(w * 0.35, h/2, 30 + (Math.sin(Date.now()/150)*10), 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(w * 0.35, h/2, 12, 0, Math.PI*2); ctx.fill();
+        ctx.restore();
+    }
+
+    function drawFunnel(ctx, f) {
+        ctx.save();
+        ctx.translate(f.x, f.y);
+        ctx.rotate(f.angle);
+        const color = f.state === 'fire' ? '#fff' : (f.state === 'lock' ? '#ef4444' : '#fb7185');
+        ctx.shadowBlur = 15; ctx.shadowColor = color;
+        ctx.fillStyle = '#1e293b';
+        ctx.beginPath(); ctx.moveTo(20, 0); ctx.lineTo(-10, -15); ctx.lineTo(-10, 15); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI*2); ctx.fill();
+        if (f.state === 'lock') {
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)'; ctx.setLineDash([10, 10]);
+            ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(2000, 0); ctx.stroke();
+        } else if (f.state === 'fire') {
+            const laserGrad = ctx.createLinearGradient(0, 0, 2000, 0);
+            laserGrad.addColorStop(0, '#fff'); laserGrad.addColorStop(0.1, '#f87171'); laserGrad.addColorStop(1, 'transparent');
+            ctx.fillStyle = laserGrad; ctx.shadowBlur = 25; ctx.shadowColor = '#ef4444';
+            ctx.fillRect(0, -7, 2000, 14);
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, -2, 2000, 4);
+        }
+        ctx.restore();
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = 'white';
+        for(let i=0; i<30; i++) {
+            let x = (Date.now() * 0.05 + i * 150) % canvas.width;
+            ctx.globalAlpha = 0.2; ctx.fillRect(x, (i*137) % canvas.height, 2, 2);
+        }
+        ctx.globalAlpha = 1.0;
+        drawPlayerShip(ctx, player.x, player.y, player.width, player.height);
+        enemies.forEach(e => drawEnemy(ctx, e));
+        if (boss.active) {
+            drawBossStarDestroyer(ctx, boss.x, boss.y, boss.width, boss.height, boss.phase, boss.isInvulnerable);
+            if (boss.phase === 1) boss.funnels.forEach(f => drawFunnel(ctx, f));
+        }
+        missiles.forEach(m => { ctx.fillStyle = m.color; ctx.fillRect(m.x, m.y, m.width, m.height); });
+        enemyMissiles.forEach(em => {
+            ctx.save(); ctx.translate(em.x, em.y);
+            if (em.homing) {
+                ctx.rotate(em.angle); ctx.fillStyle = em.color; ctx.shadowBlur = 15; ctx.shadowColor = em.color;
+                ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(-10, -8); ctx.lineTo(-10, 8); ctx.closePath(); ctx.fill();
+            } else { ctx.fillStyle = em.color; ctx.fillRect(0, 0, em.width, em.height); }
+            ctx.restore();
+        });
+        particles.forEach(p => {
+            ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
+            ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI*2); ctx.fill();
+        });
+        ctx.globalAlpha = 1.0;
+        update(); requestAnimationFrame(draw);
+    }
+
+    function resetGame() { location.reload(); }
+    draw();
+</script>
+</body>
+</html>

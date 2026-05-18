@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>迷你坦克：鋼鐵洪流 V19.49 - Boss Taunt Edition</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
+    <style>
+        body { margin: 0; background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; color: white; font-family: 'Segoe UI', sans-serif; }
+        #start-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.9); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 999; }
+        #start-button { padding: 20px 50px; font-size: 24px; font-weight: bold; color: white; background: #2ecc71; border: none; border-radius: 50px; cursor: pointer; box-shadow: 0 0 20px rgba(46, 204, 113, 0.5); }
+        #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 8px; border-left: 5px solid #2ecc71; width: 300px; z-index: 10; }
+        .info-row { font-size: 14px; margin-bottom: 8px; display: flex; justify-content: space-between; }
+        #score-display { color: #f1c40f; font-weight: bold; font-size: 18px; }
+        #ammo-name { color: #5dade2; font-weight: bold; }
+        #critical-alert { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); font-size: 64px; font-weight: 900; color: #ff0000; text-shadow: 0 0 20px #000; display: none; z-index: 100; animation: flash 0.4s infinite; pointer-events: none; user-select: none; }
+        @keyframes flash { 0% { opacity: 1; } 50% { opacity: 0.1; } 100% { opacity: 1; } }
+        
+        /* Boss 血條樣式 */
+        #boss-ui { position: absolute; top: 30px; left: 50%; transform: translateX(-50%); width: 600px; display: none; flex-direction: column; align-items: center; z-index: 100; }
+        #boss-name { font-size: 20px; font-weight: bold; color: #ff4757; text-shadow: 2px 2px 4px #000; margin-bottom: 5px; }
+        #boss-hp-bar-bg { width: 100%; height: 20px; background: rgba(0,0,0,0.5); border: 2px solid #fff; border-radius: 10px; overflow: hidden; }
+        #boss-hp-bar-fill { width: 100%; height: 100%; background: linear-gradient(90deg, #ff4757, #ff6b81); transition: width 0.2s; }
+
+        .support-header { font-size: 13px; color: #5dade2; font-weight: bold; margin-top: 10px; border-bottom: 1px solid #444; padding-bottom: 3px; }
+        .support-item { font-size: 12px; margin-top: 5px; display: flex; justify-content: space-between; }
+        .locked { color: #7f8c8d; } .unlocked { color: #2ecc71; font-weight: bold; } .cooldown { color: #e67e22; font-style: italic; }
+        #subtitle-container { position: absolute; bottom: 80px; width: 100%; pointer-events: none; display: flex; flex-direction: column-reverse; align-items: center; gap: 10px; }
+        .subtitle { font-size: 24px; font-weight: bold; text-shadow: 2px 2px 4px #000; opacity: 0; transition: opacity 0.5s; background: rgba(0,0,0,0.3); padding: 2px 15px; border-radius: 5px; }
+        
+        /* 對話顏色樣式 */
+        .speaker-blue { color: #3498db; } 
+        .speaker-red { color: #ff4757; } /* 敵方專用紅色 */
+        .text-white { color: #ffffff; }
+    </style>
+</head>
+<body>
+
+<div id="start-overlay">
+    <button id="start-button">進入戰場 (啟動 V19.49)</button>
+    <div style="margin-top: 10px; color: #aaa; font-size: 12px;">Boss 專屬副砲/主砲/半血機槍(半血時觸發敵方紅色專屬挑釁字幕)</div>
+</div>
+
+<div id="ui">
+    <div class="info-row"><span>戰場積分:</span> <span id="score-display">0</span></div>
+    <div class="info-row"><span>機體狀況:</span> <span id="hp-status" style="color:#2ecc71">100%</span></div>
+    <div class="info-row"><span>彈藥種類:</span> <span id="ammo-name">APDS (脫殼穿甲彈)</span></div>
+    <div class="info-row"><span>主砲裝填:</span> <span id="reload-status">READY</span></div>
+    <div class="info-row"><span>機槍彈藥:</span> <span id="mg-status">50 / 50</span></div>
+    <div class="support-header">彈藥選擇</div>
+    <div class="support-item" style="color:#ffffff"><span>按[1]切換脫殼穿甲彈(APDS)</span></div>
+    <div class="support-item" style="color:#f1c40f"><span>按[2]切換高爆彈(HE)</span></div>
+    <div class="support-item" style="color:#9b59b6"><span>按[3]切換破甲彈(HEAT)</span></div>
+    <div class="support-header" style="color:#2ecc71; border-top: 1px solid #444; margin-top: 15px;">戰術支援</div>
+    <div class="support-item"><span>[4] 緊急維修:</span> <span id="status-1" class="locked">未解鎖</span></div>
+    <div class="support-item"><span>[5] 裝甲援軍:</span> <span id="status-2" class="locked">未解鎖</span></div>
+    <div class="support-item"><span>[6] 空地支援:</span> <span id="status-3" class="locked">未解鎖</span></div>
+</div>
+
+<div id="boss-ui">
+    <div id="boss-name">Pz.Kpfw. VIII Maus "鼠式" 重型坦克</div>
+    <div id="boss-hp-bar-bg"><div id="boss-hp-bar-fill"></div></div>
+</div>
+
+<div id="critical-alert">履帶損毀</div>
+<div id="subtitle-container"></div>
+
+<script>
+let airstrikeAudio = new Audio('airstrike.m4a');
+let doomAudio = new Audio('doom.m4a');
+const WORLD_WIDTH = 2000; 
+const WORLD_HEIGHT = 1600;
+
+document.getElementById('start-button').addEventListener('click', function() {
+    airstrikeAudio.load();
+    doomAudio.load();
+    document.getElementById('start-overlay').remove();
+    initGame();
+});
+
+function initGame() {
+    const config = {
+        type: Phaser.AUTO, 
+        width: window.innerWidth > 1200 ? 1200 : window.innerWidth, 
+        height: window.innerHeight > 900 ? 900 : window.innerHeight, 
+        backgroundColor: '#2c3e50',
+        physics: { default: 'arcade', arcade: { debug: false } },
+        scene: { preload: preload, create: create, update: update }
+    };
+    new Phaser.Game(config);
+}
+
+let player, playerTurret, keys, bullets, enemyBullets, enemies, allies, airstrikeBullets, walls, bossWall;
+let currentAmmoType = 'AP', isReloading = false, mgAmmo = 50, isMgReloading = false, lastMgFiredTime = 0;
+let playerScore = 0, isTrackDamaged = false, isStoryTriggered = false, isCameraLocked = false, hasTriggeredAirstrikeBossDialogue = false;
+let isBossHalfHpTaunted = false; // 新增：Boss 半血對話觸發旗標
+let currentAirstrikeId = 0; 
+
+const DAMAGE_MATRIX = {
+    'tank': { 'AP': 50, 'HE': 20, 'HEAT': 34, 'MG': 2.5 }, 
+    'heavy': { 'AP': 50, 'HE': 37.5, 'HEAT': 75, 'MG': 3.34 },
+    'half-track': { 'AP': 50, 'HE': 100, 'HEAT': 50, 'MG': 5 },
+    'maus': { 'AP': 50, 'HE': 0, 'HEAT': 75, 'MG': 0 }
+};
+
+const AMMO_DATA = {
+    'AP': { name: 'APDS (脫殼穿甲彈)', speed: 1250, reload: 800, color: 0xffffff, shape: 'tri' },
+    'HE': { name: 'HE (高爆彈)', speed: 700, reload: 2000, color: 0xf1c40f, shape: 'oval' },
+    'HEAT': { name: 'HEAT (破甲彈)', speed: 950, reload: 1500, color: 0x9b59b6, shape: 'circle' }
+};
+
+let unlockStates = { 
+    s1: { unlocked: false, cd: 0, maxCD: 15, req: 500 }, 
+    s2: { unlocked: false, cd: 0, maxCD: 45, req: 1200, active: false }, 
+    s3: { unlocked: false, cd: 0, maxCD: 70, req: 2000 } 
+};
+
+function preload() {}
+
+function create() {
+    this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    bullets = this.physics.add.group();
+    enemyBullets = this.physics.add.group();
+    airstrikeBullets = this.physics.add.group();
+    enemies = this.physics.add.group();
+    allies = this.physics.add.group();
+    walls = this.physics.add.staticGroup();
+
+    const wallThickness = 40;
+    walls.add(this.add.rectangle(WORLD_WIDTH/2, 0, WORLD_WIDTH, wallThickness, 0x1a1a1a));
+    walls.add(this.add.rectangle(WORLD_WIDTH/2, WORLD_HEIGHT, WORLD_WIDTH, wallThickness, 0x1a1a1a));
+    walls.add(this.add.rectangle(0, WORLD_HEIGHT/2, wallThickness, WORLD_HEIGHT, 0x1a1a1a));
+    walls.add(this.add.rectangle(WORLD_WIDTH, WORLD_HEIGHT/2, wallThickness, WORLD_HEIGHT, 0x1a1a1a));
+
+    bossWall = this.add.rectangle(WORLD_WIDTH/2, 10, 400, 15, 0x555555);
+    this.physics.add.existing(bossWall, true);
+    walls.add(bossWall);
+
+    player = createTank(this, WORLD_WIDTH/2, WORLD_HEIGHT - 200, 0x27ae60, 0x2ecc71, 'player');
+    playerTurret = player.turret;
+    player.hp = 100;
+    
+    player.body.setCollideWorldBounds(true);
+    this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    this.cameras.main.startFollow(player, true, 0.1, 0.1);
+
+    let initialEnemyCount = Phaser.Math.Between(2, 4);
+    for(let i=0; i < initialEnemyCount; i++) spawnEnemy(this);
+    this.time.addEvent({ delay: 4000, callback: () => spawnEnemy(this), loop: true });
+
+    keys = this.input.keyboard.addKeys('W,A,S,D,ONE,TWO,THREE,FOUR,FIVE,SIX,SPACE,HOME,PAGE_UP');
+    this.input.on('pointerdown', p => { if(p.leftButtonDown() && !isCameraLocked) fireMain(this); });
+
+    this.physics.add.overlap(bullets, enemies, (b, e) => {
+        let dmg = DAMAGE_MATRIX[e.unitType][b.ammoType || 'AP'];
+        e.hp -= dmg;
+        createCircleEffect(this, b.x, b.y, 15, 0xffcc00, 300);
+        b.destroy();
+
+        if(e.unitType === 'maus') {
+            updateBossHP(e.hp, 5000); 
+            checkBossHalfHpTaunt(this, e.hp); // 檢查是否需要觸發挑釁對話
+        }
+
+        if(e.hp <= 0) { 
+            if(e.unitType === 'maus') {
+                handleBossDeath(this, e);
+            } else {
+                addScore(100);
+                explode(this, e.x, e.y, 50);
+            }
+            e.destroy(); 
+        }
+    });
+
+    this.physics.add.overlap(enemyBullets, player, (p, eb) => {
+        if (!isTrackDamaged) {
+            let dmg = eb.dmgValue || 10;
+            p.hp -= dmg;
+            createCircleEffect(this, eb.x, eb.y, 8, 0xff4444, 200);
+            if (p.hp <= 0) { p.hp = 0; isTrackDamaged = true; document.getElementById('critical-alert').style.display = 'block'; }
+        }
+        eb.destroy();
+        updateUI();
+    });
+
+    this.physics.add.collider(player, walls);
+    this.physics.add.collider(enemies, walls);
+    this.physics.add.collider(allies, walls);
+    this.physics.add.collider(player, enemies);
+    this.physics.add.collider(enemies, enemies);
+
+    this.physics.add.overlap(airstrikeBullets, enemies, (b, e) => {
+        e.airstrikeHits = (e.airstrikeHits || 0) + 1;
+        createSmokeEffect(this, b.x, b.y); 
+        let bulletAirstrikeId = b.airstrikeBatchId;
+        b.destroy();
+
+        if(e.airstrikeHits >= 2 && e.unitType !== 'maus') { 
+            addScore(50); 
+            explode(this, e.x, e.y, 60); 
+            e.destroy(); 
+        }
+        else if(e.unitType === 'maus') { 
+            e.waveDamageTrackers = e.waveDamageTrackers || {};
+            if (e.waveDamageTrackers[bulletAirstrikeId] === undefined) {
+                e.waveDamageTrackers[bulletAirstrikeId] = 0;
+            }
+
+            if (e.waveDamageTrackers[bulletAirstrikeId] < 1000) {
+                e.hp -= 100;
+                e.waveDamageTrackers[bulletAirstrikeId] += 100;
+                updateBossHP(e.hp, 5000); 
+                checkBossHalfHpTaunt(this, e.hp); // 檢查是否需要觸發挑釁對話
+
+                if(e.hp <= 0) { 
+                    handleBossDeath(this, e);
+                    e.destroy(); 
+                }
+            }
+        }
+    });
+}
+
+// 新增：處理 Boss 血量過半的挑釁對話排程
+function checkBossHalfHpTaunt(scene, currentHp) {
+    if (currentHp <= 2500 && !isBossHalfHpTaunted) {
+        isBossHalfHpTaunted = true;
+        
+        // 第一句對話：維持 4 秒 (4000ms)
+        showDialogue("鼠式車長:", "你們的火力堪比小孩的水槍", () => {
+            // 第一句結束後，立刻接第二句：維持 4 秒 (4000ms)
+            showDialogue("鼠式車長:", "這種程度的攻擊毫無意義", null, 4000);
+        }, 4000);
+    }
+}
+
+function handleBossDeath(scene, bossEntity) {
+    document.getElementById('boss-ui').style.display = 'none';
+    addScore(5000);
+    explode(scene, bossEntity.x, bossEntity.y, 120);
+    showDialogue("指揮部:", "確認擊毀目標！所有作戰人員，任務完成。");
+
+    if (doomAudio) {
+        let volumeTweenObj = { vol: doomAudio.volume };
+        scene.tweens.add({
+            targets: volumeTweenObj,
+            vol: 0,
+            duration: 3000,
+            ease: 'Linear',
+            onUpdate: () => {
+                try { doomAudio.volume = volumeTweenObj.vol; } catch(err) {}
+            },
+            onComplete: () => {
+                try { doomAudio.pause(); } catch(err) {}
+            }
+        });
+    }
+}
+
+function updateBossHP(current, max) {
+    let percentage = Math.max(0, (current / max) * 100);
+    document.getElementById('boss-hp-bar-fill').style.width = percentage + '%';
+}
+
+function update(time, delta) {
+    if(!player || !player.active || isCameraLocked) {
+        if(player && player.active) player.body.setVelocity(0);
+        return;
+    }
+    const body = player.body;
+    let forwardSpeed = isTrackDamaged ? 40 : 160;
+    let backwardSpeed = forwardSpeed * 0.6;
+
+    if(keys.W.isDown) this.physics.velocityFromRotation(player.rotation - 1.57, forwardSpeed, body.velocity);
+    else if(keys.S.isDown) this.physics.velocityFromRotation(player.rotation - 1.57, -backwardSpeed, body.velocity);
+    else body.setVelocity(0);
+
+    if(keys.A.isDown) player.rotation -= 0.015;
+    if(keys.D.isDown) player.rotation += 0.015;
+    
+    let worldPoint = this.input.activePointer.positionToCamera(this.cameras.main);
+    playerTurret.rotation = Phaser.Math.Angle.Between(player.x, player.y, worldPoint.x, worldPoint.y) - player.rotation + 1.57;
+
+    if(keys.SPACE.isDown && !isMgReloading && time > lastMgFiredTime) { fireMG(this); lastMgFiredTime = time + 75; }
+    
+    Object.values(unlockStates).forEach(s => { if(s.cd > 0) s.cd = Math.max(0, s.cd - delta/1000); });
+    refreshSupportUI();
+    
+    if(Phaser.Input.Keyboard.JustDown(keys.ONE)) switchAmmo('AP');
+    if(Phaser.Input.Keyboard.JustDown(keys.TWO)) switchAmmo('HE');
+    if(Phaser.Input.Keyboard.JustDown(keys.THREE)) switchAmmo('HEAT');
+    if(Phaser.Input.Keyboard.JustDown(keys.FOUR)) callHeal(this);
+    if(Phaser.Input.Keyboard.JustDown(keys.FIVE)) callAllies(this);
+    if(Phaser.Input.Keyboard.JustDown(keys.SIX)) callAirstrike(this, false); 
+    if(Phaser.Input.Keyboard.JustDown(keys.HOME)) callAirstrike(this, true); 
+    if(Phaser.Input.Keyboard.JustDown(keys.PAGE_UP)) addScore(1000);
+
+    processAI(this, time);
+    processAllyAI(this, time);
+}
+
+function addScore(p) { 
+    playerScore += p; 
+    Object.keys(unlockStates).forEach(k => { if(playerScore >= unlockStates[k].req) unlockStates[k].unlocked = true; }); 
+    updateUI(); 
+
+    if (playerScore >= 5000 && !isStoryTriggered) {
+        isStoryTriggered = true;
+        triggerBossStory();
+    }
+}
+
+function triggerBossStory() {
+    const lines = [
+        { s: "指揮部:", c: "所有單位注意，偵測到北邊有不明單位接近" },
+        { s: "指揮部:", c: "雷達回波異常……目標體積過大" },
+        { s: "友方偵查機:", c: "這不像一般裝甲單位" },
+        { s: "友方偵查機:", c: "目標正在穿越廢墟區……沒有減速" },
+        { s: "指揮部:", c: "所有單位注意，不明重型單位已進入戰區" }
+    ];
+
+    let delay = 0;
+    lines.forEach((line, index) => {
+        setTimeout(() => {
+            showDialogue(line.s, line.c, index === lines.length - 1 ? spawnMausBossAction : null, 5000);
+        }, delay);
+        delay += 5500; 
+    });
+}
+
+function spawnMausBossAction() {
+    const scene = Phaser.Display.Canvas.CanvasPool.pool[0].parent.game.scene.scenes[0];
+    isCameraLocked = true;
+    scene.cameras.main.stopFollow();
+    scene.cameras.main.pan(WORLD_WIDTH/2, 200, 1500, 'Power2');
+
+    try {
+        doomAudio.volume = 0.8;
+        doomAudio.currentTime = 0;
+        doomAudio.play().catch(e => {});
+    } catch(err) {}
+
+    const maus = createTank(scene, WORLD_WIDTH/2, -150, 0x444444, 0x666666, 'maus');
+    enemies.add(maus);
+    maus.rotation = Math.PI;
+
+    let hasBrokenWall = false;
+    scene.tweens.add({
+        targets: maus,
+        y: 350,
+        duration: 6000,
+        ease: 'Linear',
+        onUpdate: () => {
+            if (!hasBrokenWall && maus.y + 100 > bossWall.y) {
+                hasBrokenWall = true;
+                createWallBreakEffect(scene, bossWall.x, bossWall.y);
+                bossWall.destroy();
+                document.getElementById('boss-ui').style.display = 'flex';
+                updateBossHP(5000, 5000); 
+            }
+        },
+        onComplete: () => {
+            scene.cameras.main.pan(player.x, player.y, 1000, 'Power2', false, (cam, progress) => {
+                if(progress === 1) {
+                    scene.cameras.main.startFollow(player, true, 0.1, 0.1);
+                    isCameraLocked = false;
+
+                    showDialogue("指揮部:", "確認目標", () => {
+                        showDialogue("指揮部:", "敵方超重型裝甲單位『鼠式』進入戰場", () => {
+                            showDialogue("友方偵查機:", "你們最好別讓那東西突破防線", null, 4000);
+                        }, 4000);
+                    }, 1500);
+                }
+            });
+        }
+    });
+}
+
+function createWallBreakEffect(scene, x, y) {
+    scene.cameras.main.shake(500, 0.01);
+    for(let i=0; i<15; i++) {
+        scene.time.delayedCall(i * 30, () => {
+            let smokeX = x + (Math.random()-0.5) * 400;
+            let smokeY = y + (Math.random()-0.5) * 50;
+            let smoke = scene.add.circle(smokeX, smokeY, 20 + Math.random()*20, 0xcccccc, 0.7);
+            scene.tweens.add({
+                targets: smoke,
+                y: smoke.y + 50 + Math.random()*50,
+                scale: 2.5,
+                alpha: 0,
+                duration: 1500 + Math.random()*1000,
+                onComplete: () => smoke.destroy()
+            });
+        });
+    }
+    for(let i=0; i<20; i++) {
+        let piece = scene.add.rectangle(x + (Math.random()-0.5)*350, y, 10+Math.random()*10, 10+Math.random()*10, 0x444444);
+        scene.physics.add.existing(piece);
+        piece.body.setVelocity((Math.random()-0.5)*200, 100 + Math.random()*200);
+        piece.body.setAngularVelocity((Math.random()-0.5)*500);
+        scene.tweens.add({ targets: piece, alpha: 0, duration: 2000, onComplete: () => piece.destroy() });
+    }
+}
+
+function showDialogue(speaker, content, callback, duration = 2500) {
+    const container = document.getElementById('subtitle-container');
+    const el = document.createElement('div');
+    el.className = 'subtitle';
+    const cleanContent = content.replace(/[「」]/g, '');
+    
+    // 依據說話者動態調整名稱的顏色樣式（如果是鼠式車長，則使用 speaker-red，否則使用 speaker-blue）
+    let speakerClass = (speaker === "鼠式車長:") ? "speaker-red" : "speaker-blue";
+    
+    el.innerHTML = `<span class="${speakerClass}">${speaker}</span><span class="text-white">${cleanContent}</span>`;
+    container.appendChild(el);
+    setTimeout(() => { el.style.opacity = "1"; }, 10);
+    setTimeout(() => { 
+        el.style.opacity = "0"; 
+        setTimeout(() => { 
+            el.remove(); 
+            if(callback) callback(); 
+        }, 500); 
+    }, duration);
+}
+
+function processAllyAI(scene, time) {
+    allies.children.iterate(a => {
+        if (!a || !a.active) return;
+        let targetX = player.x, targetY = player.y;
+        let isHunting = false;
+        let closestEnemy = null;
+        let minDist = 800;
+        enemies.children.iterate(e => {
+            if (e.active) {
+                let d = Phaser.Math.Distance.Between(a.x, a.y, e.x, e.y);
+                if (d < minDist) { minDist = d; closestEnemy = e; }
+            }
+        });
+        if (closestEnemy) { targetX = closestEnemy.x; targetY = closestEnemy.y; isHunting = true; }
+        let angleToTarget = Phaser.Math.Angle.Between(a.x, a.y, targetX, targetY);
+        let distToTarget = Phaser.Math.Distance.Between(a.x, a.y, targetX, targetY);
+        a.rotation = angleToTarget + 1.57;
+        a.turret.rotation = 0;
+        if (isHunting) {
+            if (distToTarget > 150) scene.physics.velocityFromRotation(angleToTarget, 144, a.body.velocity);
+            else a.body.setVelocity(0);
+            if (time > (a.nextFire || 0)) {
+                a.nextFire = time + 2000;
+                let b = scene.add.circle(a.x, a.y, 6, 0x9b59b6);
+                bullets.add(b); scene.physics.add.existing(b);
+                b.ammoType = 'HEAT'; scene.physics.velocityFromRotation(angleToTarget, 950, b.body.velocity);
+            }
+        } else {
+            if (distToTarget > 180) scene.physics.velocityFromRotation(angleToTarget, 144, a.body.velocity);
+            else a.body.setVelocity(0);
+        }
+    });
+}
+
+function processAI(scene, time) {
+    let delta = scene.game.loop.delta || 16.67; 
+    let mausTurnSpeedPerFrame = (Math.PI / 10) * (delta / 1000);
+
+    enemies.children.iterate(e => {
+        if(!e || !e.active || isCameraLocked) return;
+        let target = player;
+        let minDist = Phaser.Math.Distance.Between(e.x, e.y, player.x, player.y);
+        let moveAngle = Phaser.Math.Angle.Between(e.x, e.y, target.x, target.y);
+        
+        if (e.unitType === 'maus') {
+            e.rotation = Phaser.Math.Angle.RotateTo(e.rotation, moveAngle + 1.57, mausTurnSpeedPerFrame);
+        } else {
+            e.rotation = moveAngle + 1.57;
+        }
+
+        if(minDist > (e.unitType === 'maus' ? 400 : 220)) {
+            scene.physics.velocityFromRotation(moveAngle, e.moveSpeed, e.body.velocity);
+        } else {
+            e.body.setVelocity(0);
+        }
+
+        if (e.turret) {
+            let absAngleToPlayer = Phaser.Math.Angle.Between(e.x, e.y, player.x, player.y);
+            e.turret.rotation = absAngleToPlayer - e.rotation + 1.57;
+        }
+
+        let finalBulletAngle = e.turret ? (e.turret.rotation + e.rotation - 1.57) : (e.rotation - 1.57);
+
+        if (e.unitType === 'maus') {
+            // ================= BOSS 鼠式專屬獨立攻擊狀態機 =================
+            
+            // 1. 75mm 副砲攻擊邏輯 (冷卻 2 秒，傷害 10%)
+            if (time > (e.nextFire75 || 0) && minDist < 850) {
+                e.nextFire75 = time + 2000;
+                let b = scene.add.circle(e.x, e.y, 5, 0xffaa00); 
+                enemyBullets.add(b);
+                scene.physics.add.existing(b);
+                b.dmgValue = 10;
+                scene.physics.velocityFromRotation(finalBulletAngle, 720, b.body.velocity);
+            }
+
+            // 2. 128mm 主砲攻擊邏輯 (冷卻 5 秒，傷害 30%)
+            if (time > (e.nextFire128 || 0) && minDist < 850) {
+                e.nextFire128 = time + 5000;
+                let b = scene.add.circle(e.x, e.y, 11, 0xff0000); 
+                enemyBullets.add(b);
+                scene.physics.add.existing(b);
+                b.dmgValue = 30;
+                scene.physics.velocityFromRotation(finalBulletAngle, 650, b.body.velocity);
+            }
+
+            // 3. 同軸機槍攻擊邏輯 (血量過半 50% 觸發，即小於等於 2500)
+            if (e.hp <= 2500) {
+                if (e.mgShotsFired === undefined) e.mgShotsFired = 0;
+                if (e.mgNextFireTime === undefined) e.mgNextFireTime = time;
+                if (e.isMgPausing === undefined) e.isMgPausing = false;
+
+                if (time > e.mgNextFireTime && minDist < 850) {
+                    let b = scene.add.circle(e.x, e.y, 2, 0xffffff); 
+                    enemyBullets.add(b);
+                    scene.physics.add.existing(b);
+                    b.dmgValue = 1; 
+                    scene.physics.velocityFromRotation(finalBulletAngle, 900, b.body.velocity);
+
+                    e.mgShotsFired++;
+
+                    // 條件 A: 打滿 75 發，進入換彈夾裝填 7 秒 (7000ms)
+                    if (e.mgShotsFired >= 75) {
+                        e.mgShotsFired = 0;
+                        e.mgNextFireTime = time + 7000;
+                    } 
+                    // 條件 B: 每打 20 發有 40% 概率停頓 1 秒 (1000ms)
+                    else if (e.mgShotsFired % 20 === 0 && Math.random() < 0.40) {
+                        e.mgNextFireTime = time + 1000;
+                    } 
+                    // 條件 C: 正常射速 1,200 發/分鐘 -> 每 50 毫秒一發
+                    else {
+                        e.mgNextFireTime = time + 50;
+                    }
+                }
+            }
+        } 
+        else {
+            // ================= 普通小兵開火邏輯 =================
+            if(time > (e.nextFire || 0) && minDist < 850) {
+                if (e.unitType === 'half-track') {
+                    e.nextFire = time + 3000 + 5000;
+                    scene.time.addEvent({
+                        delay: 150,
+                        repeat: 19,
+                        callback: () => {
+                            if (e && e.active) {
+                                let currentBulletAngle = e.turret ? (e.turret.rotation + e.rotation - 1.57) : (e.rotation - 1.57);
+                                let b = scene.add.circle(e.x, e.y, 3, 0xfff200);
+                                enemyBullets.add(b);
+                                scene.physics.add.existing(b);
+                                b.dmgValue = 3;
+                                scene.physics.velocityFromRotation(currentBulletAngle, 750, b.body.velocity);
+                            }
+                        }
+                    });
+                } 
+                else if (e.unitType === 'tank') {
+                    e.nextFire = time + 2000;
+                    let b = scene.add.circle(e.x, e.y, 5, 0xff4757);
+                    enemyBullets.add(b); 
+                    scene.physics.add.existing(b);
+                    b.dmgValue = 10;
+                    scene.physics.velocityFromRotation(finalBulletAngle, 650, b.body.velocity);
+                } 
+                else if (e.unitType === 'heavy') {
+                    e.nextFire = time + 3000;
+                    let b = scene.add.circle(e.x, e.y, 7, 0x9b59b6);
+                    enemyBullets.add(b); 
+                    scene.physics.add.existing(b);
+                    b.dmgValue = 15;
+                    scene.physics.velocityFromRotation(finalBulletAngle, 600, b.body.velocity);
+                }
+            }
+        }
+    });
+}
+
+function callAllies(s) {
+    if(unlockStates.s2.unlocked && unlockStates.s2.cd <= 0 && !unlockStates.s2.active) {
+        unlockStates.s2.active = true;
+        showDialogue("友方裝甲單位 :", "這裡是犀牛1-2，支援已抵達", null, 3000);
+        let offsets = [{x: -120, y: 120}, {x: 120, y: 120}];
+        offsets.forEach(offset => {
+            let ally = createTank(s, player.x + offset.x, player.y + offset.y, 0x2980b9, 0x3498db, 'tank');
+            ally.hp = 999999; allies.add(ally);
+        });
+        s.time.delayedCall(20000, () => {
+            allies.clear(true, true);
+            unlockStates.s2.active = false;
+            unlockStates.s2.cd = unlockStates.s2.maxCD;
+            showDialogue("友方裝甲單位 :", "彈藥耗盡，犀牛1-2脫離交戰", null, 3000);
+        });
+    }
+}
+
+function createCircleEffect(scene, x, y, radius, color, duration) {
+    let circle = scene.add.circle(x, y, radius, color);
+    scene.tweens.add({ targets: circle, scale: 2.5, alpha: 0, duration: duration, onComplete: () => circle.destroy() });
+}
+function explode(scene, x, y, size) { createCircleEffect(scene, x, y, size, 0xffa502, 400); }
+
+function fireMain(scene) {
+    if(isReloading) return;
+    let data = AMMO_DATA[currentAmmoType];
+    let angle = playerTurret.rotation + player.rotation - 1.57;
+    let b;
+    if (data.shape === 'tri') b = scene.add.triangle(player.x + Math.cos(angle)*95, player.y + Math.sin(angle)*95, 0, -10, -7, 7, 7, 7, data.color);
+    else if (data.shape === 'oval') b = scene.add.ellipse(player.x + Math.cos(angle)*95, player.y + Math.sin(angle)*95, 7, 15, data.color);
+    else b = scene.add.circle(player.x + Math.cos(angle)*95, player.y + Math.sin(angle)*95, 6, data.color);
+    b.rotation = angle + 1.57; bullets.add(b); scene.physics.add.existing(b);
+    b.ammoType = currentAmmoType; b.body.setVelocity(Math.cos(angle)*data.speed, Math.sin(angle)*data.speed);
+    isReloading = true; document.getElementById('reload-status').innerText = "RELOADING...";
+    scene.time.delayedCall(data.reload, () => { isReloading = false; document.getElementById('reload-status').innerText = "READY"; });
+}
+
+function fireMG(s) { 
+    if(mgAmmo <= 0 || isMgReloading) return;
+    let angle = playerTurret.rotation + player.rotation - 1.57;
+    let b = s.add.circle(player.x + Math.cos(angle)*85, player.y + Math.sin(angle)*85, 2, 0xf1c40f);
+    bullets.add(b); s.physics.add.existing(b); 
+    b.ammoType='MG'; b.body.setVelocity(Math.cos(angle)*1350, Math.sin(angle)*1350);
+    mgAmmo--; updateUI(); 
+    if(mgAmmo<=0) { isMgReloading=true; s.time.delayedCall(5000, ()=>{mgAmmo=50;isMgReloading=false;updateUI();}); }
+}
+
+function createTank(scene, x, y, c1, c2, type) {
+    const container = scene.add.container(x, y);
+    let body, turretContainer;
+    if (type === 'maus') {
+        const armor = 0x7a7a7a, trackColor = 0x2d2d2d, gunColor = 0x858585;
+        const leftTrack = scene.add.graphics();
+        leftTrack.fillStyle(trackColor, 1);
+        leftTrack.fillRoundedRect(-70, -105, 22, 210, 5);
+        leftTrack.lineStyle(2, 0x1a1a1a);
+        for(let i = -90; i <= 80; i += 18) { leftTrack.strokeRect(-68, i, 18, 10); }
+        const rightTrack = scene.add.graphics();
+        rightTrack.fillStyle(trackColor, 1);
+        rightTrack.fillRoundedRect(48, -105, 22, 210, 5);
+        rightTrack.lineStyle(2, 0x1a1a1a);
+        for(let i = -90; i <= 80; i += 18) { rightTrack.strokeRect(50, i, 18, 10); }
+        const hull = scene.add.graphics();
+        hull.fillStyle(armor, 1);
+        hull.fillRoundedRect(-50, -100, 100, 200, 8);
+        hull.lineStyle(3, 0x333333);
+        hull.strokeRoundedRect(-50, -100, 100, 200, 8);
+        
+        turretContainer = scene.add.container(0, 5);
+        const turret = scene.add.graphics();
+        turret.fillStyle(armor, 1);
+        turret.fillRoundedRect(-40, -45, 80, 95, 12);
+        turret.lineStyle(3, 0x222222);
+        turret.strokeRoundedRect(-40, -45, 80, 95, 12);
+        const gun = scene.add.graphics();
+        gun.fillStyle(gunColor, 1);
+        gun.fillRect(-6, -160, 12, 125); 
+        turretContainer.add([turret, gun]);
+        
+        container.add([leftTrack, rightTrack, hull, turretContainer]);
+        scene.physics.world.enable(container);
+        container.body.setSize(140, 210);
+    } else if (type === 'heavy') {
+        body = scene.add.rectangle(0, 0, 30, 60, c1);
+        turretContainer = scene.add.container(0, 0);
+        turretContainer.add([scene.add.rectangle(0, 0, 35, 35, c2), scene.add.rectangle(0, -40, 8, 55, 0x111111).setOrigin(0.5,0.5)]);
+        container.add([scene.add.rectangle(-20,0,10,65,0x111111), scene.add.rectangle(20,0,10,65,0x111111), body, turretContainer]);
+        scene.physics.world.enable(container);
+    } else if (type === 'half-track') {
+        body = scene.add.rectangle(0, 0, 25, 55, c1);
+        turretContainer = scene.add.container(0, -15);
+        turretContainer.add([scene.add.rectangle(0, 0, 15, 15, c2), scene.add.rectangle(0, -15, 4, 20, 0x111111).setOrigin(0.5,0.5)]);
+        container.add([body, scene.add.rectangle(0, 10, 22, 30, 0x111111, 0.7), turretContainer]);
+        scene.physics.world.enable(container);
+    } else {
+        container.setScale(0.6); 
+        body = scene.add.rectangle(0, 0, 60, 80, c1);
+        turretContainer = scene.add.container(0, 0);
+        turretContainer.add([scene.add.rectangle(0, 0, 42, 42, c2), scene.add.rectangle(0, -45, 10, 60, 0x111111).setOrigin(0.5,0.5)]);
+        container.add([scene.add.rectangle(-38,0,16,85,0x111111), scene.add.rectangle(38,0,16,85,0x111111), body, turretContainer]);
+        scene.physics.world.enable(container);
+    }
+    container.body.setCollideWorldBounds(true); 
+    container.turret = turretContainer; 
+    container.unitType = type; 
+    container.hp = (type==='maus'? 5000 : (type==='heavy'?300:100)); 
+    container.moveSpeed = (type==='maus'? 25 : (type==='heavy'?35: (type==='half-track'?95:70)));
+    return container;
+}
+
+function spawnEnemy(scene) {
+    if (isStoryTriggered) return; 
+    let type = Math.random() < 0.2 ? 'heavy' : (Math.random() < 0.4 ? 'half-track' : 'tank');
+    let e = createTank(scene, Math.random()*(WORLD_WIDTH-100)+50, Math.random()*(WORLD_HEIGHT/2), {heavy:0x8e44ad, 'half-track':0x95a5a6, tank:0xc0392b}[type], 0x333333, type);
+    enemies.add(e);
+}
+
+function switchAmmo(t) { currentAmmoType = t; document.getElementById('ammo-name').innerText = AMMO_DATA[t].name; }
+function updateUI() {
+    document.getElementById('score-display').innerText = playerScore;
+    document.getElementById('hp-status').innerText = isTrackDamaged ? "損毀 (按4維修)" : (player?player.hp:0) + "%";
+    document.getElementById('hp-status').style.color = isTrackDamaged ? "#ff0000" : "#2ecc71";
+    document.getElementById('mg-status').innerText = isMgReloading ? "裝填中..." : `${mgAmmo} / 50`;
+}
+function refreshSupportUI() { [1,2,3].forEach(i => { let s = unlockStates['s'+i]; let el = document.getElementById('status-'+i); if(s.unlocked) { if(s.active) { el.innerText = "使用中"; el.className = "cooldown"; } else { el.innerText = s.cd > 0 ? `CD ${Math.ceil(s.cd)}s` : "READY"; el.className = s.cd > 0 ? "cooldown" : "unlocked"; } } else { el.innerText = `未解鎖(${s.req})`; el.className = "locked"; } }); }
+function callHeal(scene) { if(unlockStates.s1.unlocked && unlockStates.s1.cd <= 0) { player.hp = 100; isTrackDamaged = false; document.getElementById('critical-alert').style.display = 'none'; unlockStates.s1.cd = unlockStates.s1.maxCD; updateUI(); showDialogue("系統:", "機體維修完畢"); } }
+
+function callAirstrike(scene, isTest = false) {
+    if(isTest || (unlockStates.s3.unlocked && unlockStates.s3.cd <= 0)) {
+        if(!isTest) unlockStates.s3.cd = unlockStates.s3.maxCD;
+        
+        currentAirstrikeId++;
+        let thisBatchId = currentAirstrikeId;
+
+        scene.time.delayedCall(8000, () => { startAutofireTimeline(scene, 1500, thisBatchId); }); 
+        scene.time.delayedCall(11500, () => { startAutofireTimeline(scene, 1500, thisBatchId); });
+        scene.time.delayedCall(9600, () => { spawnA10Shadow(scene); });
+        scene.time.delayedCall(13100, () => { spawnA10Shadow(scene); });
+        
+        showDialogue("玩家:", isTest ? "[TEST] 請求支援" : "座標已發送，請求空中打擊", () => { 
+            airstrikeAudio.currentTime = 0; 
+            airstrikeAudio.play().catch(e => {}); 
+            showDialogue("友方攻擊機:", "收到，長弓3-1已進入攻擊路徑");
+
+            let isBossActive = false;
+            enemies.children.iterate(e => { if(e && e.active && e.unitType === 'maus') isBossActive = true; });
+            
+            if (isBossActive && !hasTriggeredAirstrikeBossDialogue) {
+                scene.time.delayedCall(13000, () => {
+                    let isBossStillActive = false;
+                    enemies.children.iterate(e => { if(e && e.active && e.unitType === 'maus') isBossStillActive = true; });
+                    if (!isBossStillActive || hasTriggeredAirstrikeBossDialogue) return;
+                    
+                    hasTriggeredAirstrikeBossDialogue = true;
+                    showDialogue("友方攻擊機:", "……什麼鬼？那東西的裝甲厚到離譜", () => {
+                        showDialogue("友方攻擊機:", "穿甲彈像是在替它拋光一樣……", null, 3000);
+                    }, 3000);
+                });
+            }
+        });
+    }
+}
+
+function startAutofireTimeline(scene, duration, batchId) {
+    const fireRate = 1000 / (2000 / 60); const lockRate = 50; let target = null; let currentAngle = 0;
+    const startX = scene.cameras.main.worldView.x - 50; const startY = scene.cameras.main.worldView.centerY;
+    const lockTimer = scene.time.addEvent({ delay: lockRate, callback: () => { 
+        let minDict = 9999; target = null; enemies.children.iterate(e => { if (e.active) { let d = Phaser.Math.Distance.Between(startX, startY, e.x, e.y); if (d < minDict) { minDict = d; target = e; } } }); 
+        if (target) { let offsetX = (Math.random()-0.5)*40; let offsetY = (Math.random()-0.5)*40; currentAngle = Phaser.Math.Angle.Between(startX, startY, target.x + offsetX, target.y + offsetY); } 
+    }, loop: true });
+    
+    const fireTimer = scene.time.addEvent({ 
+        delay: fireRate, 
+        callback: () => { 
+            if (!target || !target.active) return; 
+            let b = scene.add.ellipse(startX, startY, 6, 14, 0xffffff); 
+            b.rotation = currentAngle + 1.57; 
+            b.airstrikeBatchId = batchId; 
+            airstrikeBullets.add(b); 
+            scene.physics.add.existing(b); 
+            scene.physics.velocityFromRotation(currentAngle, 3675, b.body.velocity); 
+        }, 
+        loop: true 
+    });
+    scene.time.delayedCall(duration, () => { lockTimer.remove(); fireTimer.remove(); });
+}
+
+function createSmokeEffect(scene, x, y) {
+    let flash = scene.add.circle(x, y, 5, 0xffffff);
+    scene.tweens.add({ targets: flash, scale: 3, alpha: 0, duration: 100, onComplete: () => flash.destroy() });
+    for(let i=0; i<3; i++) {
+        let smoke = scene.add.circle(x + (Math.random()-0.5)*15, y + (Math.random()-0.5)*15, 8, 0xaaaaaa, 0.6);
+        scene.tweens.add({ targets: smoke, x: smoke.x + (Math.random()-0.5)*40, y: smoke.y + (Math.random()-0.5)*40, scale: 2, alpha: 0, duration: 300 + Math.random()*300, onComplete: () => smoke.destroy() });
+    }
+}
+
+function spawnA10Shadow(scene) {
+    const g = scene.add.graphics();
+    g.fillStyle(0x000000, 0.45);
+
+    g.fillRect(-90, -14, 180, 28);
+    g.fillTriangle(90, -14, 125, 0, 90, 14);
+    g.fillRect(-10, -105, 24, 210);
+    g.fillRoundedRect(-60, -55, 40, 42, 8);
+    g.fillRoundedRect(-60, 13, 40, 42, 8);
+    g.fillRect(-125, -32, 32, 64);
+    g.fillRect(-108, -56, 8, 22);
+    g.fillRect(-108, 34, 8, 22);
+    g.fillRect(18, -70, 12, 6);
+    g.fillRect(18, -42, 12, 6);
+    g.fillRect(18, 36, 12, 6);
+    g.fillRect(18, 64, 12, 6);
+
+    g.x = scene.cameras.main.worldView.x - 340;
+    g.y = scene.cameras.main.worldView.centerY;
+    g.setDepth(100);
+
+    scene.tweens.add({
+        targets: g,
+        alpha: { from: 0.30, to: 0.50 },
+        duration: 380,
+        yoyo: true,
+        repeat: -1
+    });
+
+    scene.tweens.add({
+        targets: g,
+        x: scene.cameras.main.worldView.right + 400,
+        duration: 450,
+        ease: 'Linear',
+        onComplete: () => { g.destroy(); }
+    });
+}
+</script>
+</body>
+</html>
